@@ -24,7 +24,7 @@ module.exports = {
 
       env: {
         NODE_ENV: 'production',
-        PORT: 3000,
+        PORT: 3001,
       },
 
       // pm2's own stdout/stderr capture. The app's own logger writes to
