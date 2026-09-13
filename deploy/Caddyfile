@@ -1,0 +1,27 @@
+# Caddy v2 reverse-proxy for the stock-quality web server.
+#
+# Before reloading Caddy:
+#   1. Replace YOUR.DOMAIN.COM below with the real domain.
+#   2. Make sure a DNS A record for that domain points at this VPS.
+#   3. Make sure ports 80 and 443 are open (ufw allow 80,443/tcp).
+#
+# Caddy will automatically obtain a Let's Encrypt cert the first time it
+# sees traffic on :80 for this domain.
+#
+# Install:
+#   sudo apt install -y caddy     # if not already
+#   sudo cp this-file /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+
+YOUR.DOMAIN.COM {
+    reverse_proxy localhost:3000
+
+    encode zstd gzip
+
+    log {
+        output file /var/log/caddy/stock-quality.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}

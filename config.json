@@ -1,0 +1,6 @@
+{
+  "questionConcurrency": 1,
+  "stockSearchConcurrency": 1,
+  "reportPasscode": "1234",
+  "batchSize": 1
+}

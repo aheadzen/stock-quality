@@ -1,0 +1,25 @@
+{
+  "name": "stock-quality",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "bin": {
+    "stock-quality": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "web": "node src/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "CLI that uses the MiniMax API to evaluate stocks on a quality checklist",
+  "type": "module",
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "chalk": "^6.0.0",
+    "dotenv": "^17.4.2",
+    "openai": "^7.15.0",
+    "p-limit": "^7.3.2"
+  }
+}

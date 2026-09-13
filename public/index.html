@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Investment Quality</title>
+  <style>
+    :root {
+      --bg: #f7f7f8;
+      --panel: #ffffff;
+      --border: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --green: #16a34a;
+      --yellow: #ca8a04;
+      --red: #dc2626;
+      --gray: #9ca3af;
+      --magenta: #a21caf;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+    h1 { margin: 0 0 4px; font-size: 28px; }
+    .tagline {
+      margin: 0 0 6px;
+      font-size: 15px;
+      font-style: italic;
+      color: var(--text);
+      opacity: 0.75;
+    }
+    .subtitle { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+
+    .form {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+    input[type="text"], input[type="password"] {
+      flex: 1;
+      padding: 10px 14px;
+      font-size: 15px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="text"]:focus, input[type="password"]:focus { border-color: var(--accent); }
+    button {
+      padding: 10px 20px;
+      font-size: 15px;
+      font-weight: 500;
+      color: white;
+      background: var(--accent);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background-color 0.15s;
+    }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled { background: var(--gray); cursor: not-allowed; }
+    button.secondary {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    button.secondary:hover:not(:disabled) { background: #f3f4f6; }
+    button.danger {
+      background: var(--red);
+    }
+    button.danger:hover:not(:disabled) { background: #b91c1c; }
+
+    .status {
+      color: var(--muted);
+      font-size: 14px;
+      min-height: 20px;
+      margin-bottom: 16px;
+    }
+    .status.error { color: var(--red); }
+    .status.paused { color: var(--yellow); }
+
+    .dashboard {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    @media (max-width: 720px) {
+      .dashboard { grid-template-columns: 1fr; }
+    }
+
+    .column h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      justify-content: space-between;
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.05s;
+    }
+    .card:hover { border-color: var(--accent); }
+    .card:active { transform: scale(0.998); }
+    .card.kind-listed { border-left: 4px solid var(--green); }
+    .card.kind-ipo { border-left: 4px solid var(--yellow); }
+    .card.kind-unlisted { border-left: 4px solid var(--gray); }
+    .card.kind-crypto { border-left: 4px solid var(--magenta); }
+
+    .card-body { flex: 1; min-width: 0; }
+    .card-row1 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+    }
+    .card-name {
+      font-weight: 600;
+      font-size: 15px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+    .card-ticker {
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+    }
+    .kind-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 700;
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      color: white;
+    }
+    .kind-badge-listed { background: var(--green); }
+    .kind-badge-ipo { background: var(--yellow); }
+    .kind-badge-unlisted { background: var(--gray); }
+    .kind-badge-crypto { background: var(--magenta); }
+
+    .card-profile {
+      color: var(--muted);
+      font-size: 13px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .card-time {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-style: italic;
+    }
+    .card-score {
+      flex-shrink: 0;
+      text-align: right;
+      min-width: 70px;
+    }
+    .score-big {
+      font-size: 32px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .score-big.good { color: var(--green); }
+    .score-big.mid  { color: var(--yellow); }
+    .score-big.bad  { color: var(--red); }
+    .score-big.gray { color: var(--gray); }
+    .score-num { font-variant-numeric: tabular-nums; }
+    .score-total {
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+    .score-evaluating {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted);
+      font-style: italic;
+      margin-top: 4px;
+      letter-spacing: 0.04em;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.55; }
+    }
+    .score-evaluating { animation: pulse 1.4s ease-in-out infinite; }
+
+    .status-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .status-pill.pending { background: #fef3c7; color: #92400e; }
+    .status-pill.processing { background: #dbeafe; color: #1e40af; }
+    .status-pill.done { background: #dcfce7; color: #166534; }
+    .status-pill.error { background: #fee2e2; color: #991b1b; }
+
+    .empty {
+      padding: 24px;
+      text-align: center;
+      color: var(--muted);
+      background: var(--panel);
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+    }
+
+    .error-card {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-left: 4px solid var(--red);
+      border-radius: 10px;
+      padding: 0;
+      margin-bottom: 10px;
+    }
+    .error-card .card {
+      border: none;
+      background: transparent;
+      margin-bottom: 0;
+      cursor: default;
+    }
+    .error-card .card:hover { border-color: transparent; }
+    .error-message {
+      padding: 0 16px 12px;
+      color: #991b1b;
+      font-size: 13px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .error-actions {
+      padding: 0 16px 14px;
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    /* Detail page */
+    .detail-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .detail-header .card-name { font-size: 22px; max-width: none; }
+    .detail-meta {
+      color: var(--muted);
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+    .detail-score {
+      font-size: 36px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .detail-summary {
+      display: flex;
+      gap: 32px;
+      align-items: center;
+      padding: 18px 20px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 24px;
+    }
+    .passcode-prompt {
+      max-width: 360px;
+      margin: 32px auto;
+      padding: 24px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      text-align: center;
+    }
+    .passcode-prompt h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+    .passcode-prompt p {
+      color: var(--muted);
+      font-size: 13px;
+      margin: 0 0 16px;
+    }
+    .passcode-prompt .passcode-form {
+      display: flex;
+      gap: 8px;
+    }
+    .passcode-prompt input {
+      letter-spacing: 0.5em;
+      text-align: center;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 18px;
+    }
+    .passcode-error {
+      color: var(--red);
+      font-size: 13px;
+      margin-top: 8px;
+      min-height: 18px;
+    }
+
+    .factors-table {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .factors-row {
+      display: grid;
+      grid-template-columns: 50px 1fr 60px;
+      gap: 12px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      align-items: start;
+    }
+    .factors-row:last-child { border-bottom: none; }
+    .factors-row .idx {
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+    }
+    .factors-row .question {
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+    .factors-row .reasoning {
+      color: #374151;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .factors-row .reasoning.error {
+      color: var(--red);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+    }
+    .factors-row .score {
+      text-align: center;
+      font-weight: 700;
+      font-size: 18px;
+    }
+    .factors-row .score.good { color: var(--green); }
+    .factors-row .score.bad { color: var(--red); }
+    .factors-row .score.err { color: var(--gray); }
+  </style>
+</head>
+<body>
+  <div class="container" id="root">
+    <!-- rendered by router -->
+  </div>
+
+  <script>
+    const root = document.getElementById('root');
+    const AUTH_KEY = 'stockQuality.reportAuth';
+    const PASS_KEY = 'stockQuality.reportPasscode';
+
+    function setStatus(text, kind = '') {
+      const el = document.getElementById('status');
+      if (!el) return;
+      el.textContent = text;
+      el.className = 'status' + (kind ? ' ' + kind : '');
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function pctClass(score, total) {
+      if (!total) return 'gray';
+      const pct = (score / total) * 100;
+      if (pct >= 70) return 'good';
+      if (pct >= 40) return 'mid';
+      return 'bad';
+    }
+
+    function pickTimestamp(r) {
+      if (r.status === 'done' && r.evaluated_at) {
+        return { ts: r.evaluated_at, verb: 'evaluated' };
+      }
+      if (r.status === 'pending' || r.status === 'processing') {
+        return { ts: r.created_at, verb: 'queued' };
+      }
+      return { ts: r.updated_at || r.created_at, verb: 'updated' };
+    }
+
+    function formatRelative(ms) {
+      if (!ms || ms < 0) return '';
+      const diff = Math.max(0, Date.now() - ms);
+      const sec = Math.floor(diff / 1000);
+      if (sec < 5) return 'just now';
+      if (sec < 60) return `${sec} second${sec === 1 ? '' : 's'} ago`;
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `${min} minute${min === 1 ? '' : 's'} ago`;
+      const hr = Math.floor(min / 60);
+      if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+      const day = Math.floor(hr / 24);
+      if (day < 30) return `${day} day${day === 1 ? '' : 's'} ago`;
+      const mo = Math.floor(day / 30);
+      if (mo < 12) return `${mo} month${mo === 1 ? '' : 's'} ago`;
+      const yr = Math.floor(day / 365);
+      return `${yr} year${yr === 1 ? '' : 's'} ago`;
+    }
+
+    // --- router ---
+
+    function getRoute() {
+      const h = (location.hash || '#/').slice(1);
+      const parts = h.split('/').filter(Boolean);
+      if (parts.length === 0) return { name: 'dashboard' };
+      if (parts[0] === 'stock' && parts[1]) return { name: 'detail', ticker: decodeURIComponent(parts[1]).toUpperCase() };
+      return { name: 'dashboard' };
+    }
+
+    function navigate(hash) {
+      location.hash = hash;
+    }
+
+    function renderDashboard() {
+      root.innerHTML = `
+        <h1>Investment Quality</h1>
+        <p class="tagline">Prepare for the worst, hope for the best.</p>
+        <p class="subtitle">Evaluate any stock, crypto, IPO or idea against a business quality checklist.</p>
+        <form class="form" id="form">
+          <input type="text" id="input" placeholder="Enter ticker, name, or idea (e.g. AAPL, Berkshire Hathaway, BTC)" autocomplete="off" required />
+          <button type="submit" id="btn">Evaluate</button>
+        </form>
+        <div class="status" id="status"></div>
+        <div class="dashboard">
+          <div class="column">
+            <h2>Ongoing</h2>
+            <div id="requests-list"></div>
+          </div>
+          <div class="column">
+            <h2>Best</h2>
+            <div id="best-list"></div>
+          </div>
+        </div>
+      `;
+      wireDashboard();
+      refreshAll();
+    }
+
+    async function renderDetail(ticker) {
+      root.innerHTML = `
+        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 12px;">
+          <button class="secondary" id="back-btn">← Back</button>
+          <button class="danger" id="delete-btn" style="margin-left: auto;">Delete</button>
+        </div>
+        <div id="detail-body">
+          <div class="empty">Loading ${escapeHtml(ticker)}…</div>
+        </div>
+      `;
+      document.getElementById('back-btn').addEventListener('click', () => navigate('#/'));
+      document.getElementById('delete-btn').addEventListener('click', () => showDeletePrompt(ticker));
+      await renderDetailBody(ticker);
+    }
+
+    function showDeletePrompt(ticker) {
+      const body = document.getElementById('detail-body');
+      body.innerHTML = `
+        <div class="passcode-prompt">
+          <h3 style="color: var(--red);">Delete ${escapeHtml(ticker)}?</h3>
+          <p>This permanently removes the cached evaluation, factors, company record, and request history for this ticker. Enter the 4-digit passcode to confirm.</p>
+          <form class="passcode-form" id="delete-form">
+            <input type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" autocomplete="off" id="delete-input" autofocus />
+            <button type="submit" class="danger">Delete</button>
+          </form>
+          <div class="passcode-error" id="delete-error"></div>
+          <button class="secondary" id="delete-cancel" style="margin-top: 12px;">Cancel</button>
+        </div>
+      `;
+      const input = document.getElementById('delete-input');
+      document.getElementById('delete-cancel').addEventListener('click', () => renderDetailBody(ticker));
+      document.getElementById('delete-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const typed = input.value.trim();
+        if (!typed) {
+          document.getElementById('delete-error').textContent = 'Please enter a 4-digit code.';
+          return;
+        }
+        const errEl = document.getElementById('delete-error');
+        errEl.textContent = 'Deleting…';
+        try {
+          const res = await fetch('/api/report/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ticker, passcode: typed }),
+          });
+          if (res.status === 403) {
+            errEl.textContent = 'Wrong passcode.';
+            input.value = '';
+            input.focus();
+            return;
+          }
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            errEl.textContent = j.error || `HTTP ${res.status}`;
+            return;
+          }
+          // Clear in-tab passcode cache and bounce back to dashboard.
+          sessionStorage.removeItem(PASS_KEY);
+          navigate('#/');
+        } catch (err) {
+          errEl.textContent = `Network error: ${err.message}`;
+        }
+      });
+    }
+
+    async function renderDetailBody(ticker, errorMsg = '') {
+      const body = document.getElementById('detail-body');
+      body.innerHTML = '<div class="empty">Loading…</div>';
+
+      // Pull company metadata from /api/best or /api/requests?status=ongoing.
+      let header = null;
+      try {
+        const [ongoing, best] = await Promise.all([
+          fetch('/api/requests?status=ongoing').then((r) => r.json()),
+          fetch('/api/best').then((r) => r.json()),
+        ]);
+        header =
+          (best.requests || []).find((r) => r.ticker === ticker) ||
+          (ongoing.requests || []).find((r) => r.ticker === ticker) ||
+          null;
+      } catch (e) { /* ignore */ }
+
+      if (!header) {
+        body.innerHTML = `
+          <div class="empty">
+            No recent activity for <strong>${escapeHtml(ticker)}</strong>.
+            Submit it from the dashboard first.
+          </div>
+        `;
+        return;
+      }
+
+      const kind = header.kind || 'listed';
+      const headerHtml = `
+        <div class="detail-header">
+          <span class="card-name">${escapeHtml(header.name || ticker)}</span>
+          <span class="card-ticker">(${escapeHtml(ticker)})</span>
+          <span class="kind-badge kind-badge-${kind}">${escapeHtml(kind.toUpperCase())}</span>
+        </div>
+        <div class="detail-meta">${escapeHtml(header.profile || '')}</div>
+        <div class="detail-summary">
+          <div class="detail-score ${pctClass(header.score, header.total)}">
+            ${typeof header.score === 'number' ? `${header.score} / ${header.total || '?'}` : ''}
+          </div>
+          <div style="color: var(--muted); font-size: 13px;">
+            ${header.evaluated_at ? `Evaluated ${escapeHtml(formatRelative(header.evaluated_at))}` : ''}
+          </div>
+        </div>
+      `;
+
+      const storedPasscode = sessionStorage.getItem(PASS_KEY) || '';
+
+      if (!storedPasscode) {
+        body.innerHTML = headerHtml + `
+          <div class="passcode-prompt">
+            <h3>Enter 4-digit passcode</h3>
+            <p>Required to view per-question reasoning.</p>
+            <form class="passcode-form" id="passcode-form">
+              <input type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" autocomplete="off" id="passcode-input" autofocus />
+              <button type="submit">Unlock</button>
+            </form>
+            <div class="passcode-error" id="passcode-error">${escapeHtml(errorMsg)}</div>
+          </div>
+        `;
+        const form = document.getElementById('passcode-form');
+        const input = document.getElementById('passcode-input');
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const typed = input.value.trim();
+          if (!typed) {
+            document.getElementById('passcode-error').textContent = 'Please enter a 4-digit code.';
+            return;
+          }
+          sessionStorage.setItem(PASS_KEY, typed);
+          await renderDetailBody(ticker);
+        });
+        return;
+      }
+
+      // Have a stored passcode — fetch factors.
+      let report;
+      try {
+        const res = await fetch('/api/report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticker, passcode: storedPasscode }),
+        });
+        if (res.status === 403) {
+          sessionStorage.removeItem(PASS_KEY);
+          return renderDetailBody(ticker, 'Wrong passcode. Try again.');
+        }
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          body.innerHTML = headerHtml + `<div class="empty">${escapeHtml(j.error || `HTTP ${res.status}`)}</div>`;
+          return;
+        }
+        report = await res.json();
+      } catch (err) {
+        body.innerHTML = headerHtml + `<div class="empty">Network error: ${escapeHtml(err.message)}</div>`;
+        return;
+      }
+
+      const factorsHtml = report.factors.map((f) => {
+        const scoreCell = f.error
+          ? '<span class="score err">ERR</span>'
+          : f.score === 1
+            ? '<span class="score good">1</span>'
+            : '<span class="score bad">0</span>';
+        const reasoningClass = f.error ? 'reasoning error' : 'reasoning';
+        const reasoningText = f.error ? f.error : f.reasoning;
+        return `
+          <div class="factors-row">
+            <div class="idx">#${f.idx + 1}</div>
+            <div>
+              <div class="question">${escapeHtml(f.question)}</div>
+              <div class="${reasoningClass}">${escapeHtml(reasoningText)}</div>
+            </div>
+            <div>${scoreCell}</div>
+          </div>
+        `;
+      }).join('');
+
+      body.innerHTML = headerHtml + `<div class="factors-table">${factorsHtml}</div>`;
+    }
+
+    // --- dashboard wiring ---
+
+    function renderRequestCard(r, { showStatus = true, clickable = true } = {}) {
+      const kind = r.kind || 'listed';
+      const ticker = r.ticker ? `<span class="card-ticker">(${escapeHtml(r.ticker)})</span>` : '';
+      const badge = `<span class="kind-badge kind-badge-${kind}">${escapeHtml(kind.toUpperCase())}</span>`;
+      const name = escapeHtml(r.name || r.input || '');
+      const profile = escapeHtml(r.profile || '');
+      const pill = showStatus
+        ? `<span class="status-pill ${escapeHtml(r.status)}">${escapeHtml(r.status)}</span>`
+        : '';
+      const scoreText = (r.status === 'done' && typeof r.score === 'number')
+        ? `<span class="score-big ${pctClass(r.score, r.total)}">${r.score} / ${r.total || '?'}</span>`
+        : (r.status === 'error'
+            ? `<span class="score-big gray" title="${escapeHtml(r.error_message || '')}">ERR</span>`
+            : (r.status === 'processing' && typeof r.score === 'number'
+                ? `<span class="score-big gray"><span class="score-num">${r.score}</span><span class="score-total"> / ${r.total ?? '?'}</span><div class="score-evaluating">evaluating…</div></span>`
+                : ''));
+      const ts = pickTimestamp(r);
+      const timeText = ts.ts ? `<div class="card-time">${escapeHtml(ts.verb)} ${escapeHtml(formatRelative(ts.ts))}</div>` : '';
+      const cursorStyle = clickable ? '' : 'cursor: default;';
+      const onClick = clickable && r.ticker
+        ? ` onclick="location.hash='#/stock/${encodeURIComponent(r.ticker)}'"`
+        : '';
+      return `
+        <div class="card kind-${kind}" style="${cursorStyle}"${onClick}>
+          <div class="card-body">
+            <div class="card-row1">
+              <span class="card-name">${name}</span>
+              ${ticker}
+              ${badge}
+              ${pill}
+            </div>
+            ${profile ? `<div class="card-profile">${profile}</div>` : ''}
+            ${timeText}
+          </div>
+          <div class="card-score">${scoreText}</div>
+        </div>
+      `;
+    }
+
+    function renderOngoing(requests) {
+      const el = document.getElementById('requests-list');
+      if (!el) return;
+      if (!requests || requests.length === 0) {
+        el.innerHTML = '<div class="empty">No ongoing requests.</div>';
+        return;
+      }
+      el.innerHTML = requests.map((r) => renderRequestCard(r, { clickable: !!r.ticker })).join('');
+    }
+
+    function renderErrors(errors) {
+      const el = document.getElementById('requests-list');
+      if (!el) return;
+      if (!errors || errors.length === 0) return;
+      const html = errors.map((e) => {
+        const actions = `<div class="error-actions">
+          <button class="secondary" data-retry-id="${e.id}">Retry</button>
+          <button class="secondary" data-dismiss-id="${e.id}">Delete</button>
+        </div>`;
+        const msg = e.error_message ? `<div class="error-message">${escapeHtml(e.error_message)}</div>` : '';
+        return `<div class="error-card">${renderRequestCard(e, { clickable: false })}${msg}${actions}</div>`;
+      }).join('');
+      const existing = el.innerHTML;
+      el.innerHTML = html + (existing.includes('class="empty"') ? '' : existing);
+      // Wire retry buttons.
+      el.querySelectorAll('button[data-retry-id]').forEach((btn) => {
+        btn.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          const id = btn.getAttribute('data-retry-id');
+          btn.disabled = true;
+          btn.textContent = 'Retrying…';
+          try {
+            const res = await fetch(`/api/requests/${id}/retry`, { method: 'POST' });
+            if (!res.ok) {
+              const j = await res.json().catch(() => ({}));
+              btn.textContent = j.error || 'Failed';
+              btn.disabled = false;
+              return;
+            }
+            await refreshAll();
+          } catch (err) {
+            btn.textContent = `Network error`;
+            btn.disabled = false;
+          }
+        });
+      });
+      // Wire dismiss buttons — removes just this one row (no passcode).
+      el.querySelectorAll('button[data-dismiss-id]').forEach((btn) => {
+        btn.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          const id = btn.getAttribute('data-dismiss-id');
+          btn.disabled = true;
+          btn.textContent = 'Removing…';
+          try {
+            const res = await fetch(`/api/requests/${id}/dismiss`, { method: 'POST' });
+            if (!res.ok) {
+              const j = await res.json().catch(() => ({}));
+              btn.textContent = j.error || 'Failed';
+              btn.disabled = false;
+              return;
+            }
+            await refreshAll();
+          } catch (err) {
+            btn.textContent = 'Network error';
+            btn.disabled = false;
+          }
+        });
+      });
+    }
+
+    function renderBest(requests) {
+      const el = document.getElementById('best-list');
+      if (!el) return;
+      if (!requests || requests.length === 0) {
+        el.innerHTML = '<div class="empty">No completed evaluations yet.</div>';
+        return;
+      }
+      el.innerHTML = requests.map((r) => renderRequestCard(r, { showStatus: false })).join('');
+    }
+
+    async function fetchOngoing() {
+      try {
+        const res = await fetch('/api/requests?status=ongoing');
+        if (!res.ok) return;
+        const j = await res.json();
+        renderOngoing(j.requests);
+        renderErrors(j.errors || []);
+        if (j.paused) setStatus('Paused — rate limit hit. Will resume in the background.', 'paused');
+      } catch (err) { /* silent */ }
+    }
+
+    async function fetchBest() {
+      try {
+        const res = await fetch('/api/best');
+        if (!res.ok) return;
+        const j = await res.json();
+        renderBest(j.requests);
+      } catch (err) { /* silent */ }
+    }
+
+    async function refreshAll() {
+      await Promise.all([fetchOngoing(), fetchBest()]);
+    }
+
+    function wireDashboard() {
+      const form = document.getElementById('form');
+      const input = document.getElementById('input');
+      const btn = document.getElementById('btn');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const value = input.value.trim();
+        if (!value) return;
+        btn.disabled = true;
+        setStatus(`Queuing "${value}"...`);
+        try {
+          const res = await fetch('/api/requests', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ input: value }),
+          });
+          const j = await res.json();
+          if (!res.ok) {
+            setStatus(j.error || `HTTP ${res.status}`, 'error');
+          } else if (j.status === 'done') {
+            setStatus(`Cached: ${j.score} / ${j.total} (${j.ticker || 'n/a'}).`);
+            input.value = '';
+            input.focus();
+            await refreshAll();
+          } else {
+            setStatus(`Queued #${j.id}. Watch the Ongoing column.`);
+            input.value = '';
+            input.focus();
+            await refreshAll();
+          }
+        } catch (err) {
+          setStatus(`Network error: ${err.message}`, 'error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    }
+
+    // --- router dispatch ---
+
+    function dispatch() {
+      const route = getRoute();
+      if (route.name === 'detail') {
+        renderDetail(route.ticker);
+      } else {
+        renderDashboard();
+      }
+    }
+
+    window.addEventListener('hashchange', dispatch);
+    dispatch();
+
+    // Only poll for the dashboard; detail page is one-shot.
+    setInterval(() => {
+      if (getRoute().name === 'dashboard') refreshAll();
+    }, 3000);
+  </script>
+</body>
+</html>
