@@ -5,9 +5,9 @@ import path from 'node:path';
 import process from 'node:process';
 
 import { loadConfig } from './config.js';
-import { initDb } from './db.js';
+import { initDb, getStatements, factorsByTickerAndHashes } from './db.js';
 import { loadQuestions } from './questions.js';
-import { questionsHash } from './cache.js';
+import { questionHash, findCompany } from './cache.js';
 import {
   enqueueRequest,
   startProcessor,
@@ -25,6 +25,23 @@ import { getSettings } from './settings.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.resolve('./public');
+// Public preview exposes the first N factors of a ticker's evaluation so the
+// detail page can tease the analysis without a passcode. The remaining
+// factors stay locked behind POST /api/report. Bump this number with care —
+// every preview row is one more question's text + reasoning visible without
+// authentication.
+const PREVIEW_FACTOR_LIMIT = 3;
+
+// Memoize the per-kind question counts. The UI polls /api/best every 3s and
+// questions.json only changes at restart (server boot), so loading it once
+// per kind at startup is correct.
+let _companyQuestionCount = null;
+let _cryptoQuestionCount = null;
+function kindCounts() {
+  if (_companyQuestionCount === null) _companyQuestionCount = loadQuestions('company').length;
+  if (_cryptoQuestionCount === null) _cryptoQuestionCount = loadQuestions('crypto').length;
+  return [_companyQuestionCount, _cryptoQuestionCount];
+}
 
 // ---------- helpers ----------
 
@@ -115,6 +132,7 @@ function shapeRequestRow(r) {
     name: r.company_name ?? null,
     kind: r.company_kind ?? null,
     profile: r.company_profile ?? null,
+    country: r.company_country ?? null,
   };
 }
 
@@ -140,15 +158,17 @@ async function handlePostRequest(req, res) {
 }
 
 function handleGetRequests(req, res, url) {
+  const RECENT_LIMIT = 15;
+  const ERROR_LIMIT = 5;
   const status = url.searchParams.get('status');
   if (status === 'errors') {
-    const rows = getRecentErrors(5).map(shapeRequestRow);
+    const rows = getRecentErrors(ERROR_LIMIT).map(shapeRequestRow);
     return sendJson(res, 200, { requests: rows, paused: isPaused() });
   }
   // default (and ?status=ongoing): pending + processing + recent errors,
   // so the operator always sees what just blew up.
-  const ongoing = getOngoing(5).map(shapeRequestRow);
-  const errors = getRecentErrors(5).map(shapeRequestRow);
+  const ongoing = getOngoing(RECENT_LIMIT).map(shapeRequestRow);
+  const errors = getRecentErrors(ERROR_LIMIT).map(shapeRequestRow);
   return sendJson(res, 200, {
     requests: ongoing,
     errors,
@@ -157,17 +177,17 @@ function handleGetRequests(req, res, url) {
 }
 
 function handleGetBest(req, res) {
-  // Compute current hashes for both question sets so the Best list shows
-  // both companies and crypto rows.
-  const companyHash = questionsHash(loadQuestions('company'));
-  const cryptoHash = questionsHash(loadQuestions('crypto'));
-  const rows = getBest(5, [companyHash, cryptoHash]).map((r) => ({
+  // Per-question caching means "complete evaluation" is determined by the
+  // count of distinct cached factors matching the current question set for
+  // the ticker's kind. Pass the two kind counts into the best-of query.
+  const rows = getBest(5, kindCounts()).map((r) => ({
     id: r.id,
     input: r.input,
     ticker: r.ticker,
     name: r.name,
     kind: r.kind,
     profile: r.profile,
+    country: r.country ?? null,
     status: r.status,
     score: r.score,
     total: r.total,
@@ -175,6 +195,47 @@ function handleGetBest(req, res) {
     evaluated_at: r.evaluated_at ?? null,
   }));
   return sendJson(res, 200, { requests: rows });
+}
+
+async function handlePostReportPreview(req, res) {
+  // Public preview: returns the company header + the first
+  // PREVIEW_FACTOR_LIMIT factors without requiring a passcode. The full
+  // report (and remaining factors) still requires POST /api/report with a
+  // valid passcode.
+  let body;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    return sendJson(res, 400, { error: err.message });
+  }
+  const ticker = (body.ticker || '').toString().trim().toUpperCase();
+  if (!ticker) return sendJson(res, 400, { error: 'ticker is required' });
+
+  const company = findCompany(ticker);
+  const kind = company?.kind || 'listed';
+  const hashes = loadQuestions(kind).map(questionHash);
+
+  // Per-question filter — no more JOIN through evaluations. The ix_evaluation
+  // _factors_ticker_idx index gives ordered reads; the IN-list filter is
+  // selective enough that the small question set stays fast.
+  const rows = factorsByTickerAndHashes(ticker, hashes);
+  if (rows.length === 0) {
+    return sendJson(res, 404, { error: `No factors for ${ticker} against current questions` });
+  }
+  const factors = rows.slice(0, PREVIEW_FACTOR_LIMIT).map((f) => ({
+    idx: f.idx,
+    question: f.question,
+    score: f.score,
+    reasoning: f.reasoning,
+    error: f.error,
+  }));
+  const total = rows.length;
+
+  logInfo(
+    'api',
+    `POST /api/report/preview served ${ticker} (${factors.length} of ${total} factors, kind=${kind})`
+  );
+  return sendJson(res, 200, { ticker, company, factors, total });
 }
 
 async function handlePostReport(req, res) {
@@ -196,30 +257,21 @@ async function handlePostReport(req, res) {
   }
 
   // Look up the company kind so we load the matching question set.
-  const db = initDb();
-  const companyRow = db
-    .prepare(`SELECT kind FROM companies WHERE ticker = ?`)
-    .get(ticker);
-  const kind = companyRow?.kind || 'listed';
-  const hash = questionsHash(loadQuestions(kind));
+  const company = findCompany(ticker);
+  const kind = company?.kind || 'listed';
+  const hashes = loadQuestions(kind).map(questionHash);
 
-  const factors = db
-    .prepare(
-      `SELECT f.idx, f.question, f.score, f.reasoning, f.error
-       FROM evaluation_factors f
-       JOIN evaluations e ON e.id = f.evaluation_id
-       WHERE e.ticker = ? AND e.questions_hash = ?
-       ORDER BY f.idx ASC`
-    )
-    .all(ticker, hash);
-
-  if (factors.length === 0) {
+  const rows = factorsByTickerAndHashes(ticker, hashes);
+  if (rows.length === 0) {
     return sendJson(res, 404, { error: `No factors for ${ticker} against current questions` });
   }
-
-  const company = db
-    .prepare(`SELECT ticker, name, kind, profile FROM companies WHERE ticker = ?`)
-    .get(ticker);
+  const factors = rows.map((f) => ({
+    idx: f.idx,
+    question: f.question,
+    score: f.score,
+    reasoning: f.reasoning,
+    error: f.error,
+  }));
 
   logInfo('api', `POST /api/report served ${ticker} (${factors.length} factors, kind=${kind})`);
   return sendJson(res, 200, { ticker, company, factors });
@@ -246,21 +298,13 @@ async function handlePostDelete(req, res) {
   const db = initDb();
   // Wipe everything tied to this ticker so a fresh re-evaluation starts
   // from a clean slate. Order: factors → evaluations → companies → requests.
-  const ids = db
-    .prepare(`SELECT id FROM evaluations WHERE ticker = ?`)
-    .all(ticker);
-  const evalIds = ids.map((r) => r.id);
-
+  // Factors are wiped directly by ticker (the per-question cache is keyed on
+  // ticker, not on evaluation_id).
   const counts = db.transaction(() => {
-    const delFactors = db.prepare(`DELETE FROM evaluation_factors WHERE evaluation_id = ?`);
-    const delEvals = db.prepare(`DELETE FROM evaluations WHERE ticker = ?`);
-    const delCo = db.prepare(`DELETE FROM companies WHERE ticker = ?`);
-    const delReq = db.prepare(`DELETE FROM requests WHERE ticker = ?`);
-    let factors = 0;
-    for (const id of evalIds) factors += delFactors.run(id).changes;
-    const evals = delEvals.run(ticker).changes;
-    const company = delCo.run(ticker).changes;
-    const requests = delReq.run(ticker).changes;
+    const factors = db.prepare(`DELETE FROM evaluation_factors WHERE ticker = ?`).run(ticker).changes;
+    const evals = db.prepare(`DELETE FROM evaluations WHERE ticker = ?`).run(ticker).changes;
+    const company = db.prepare(`DELETE FROM companies WHERE ticker = ?`).run(ticker).changes;
+    const requests = db.prepare(`DELETE FROM requests WHERE ticker = ?`).run(ticker).changes;
     return { factors, evals, company, requests };
   })();
 
@@ -325,6 +369,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/report') {
       return handlePostReport(req, res);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/report/preview') {
+      return handlePostReportPreview(req, res);
     }
     if (req.method === 'POST' && url.pathname === '/api/report/delete') {
       return handlePostDelete(req, res);

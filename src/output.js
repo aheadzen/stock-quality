@@ -51,6 +51,15 @@ function fmtPriceLine(company) {
   return chalk.bold('Price:   ') + `${company.price.toLocaleString()} ${company.currency}`;
 }
 
+// Country line — shown only for non-crypto kinds. Crypto assets are global
+// by design, so the field is intentionally absent from the company object
+// for kind='crypto' (see normalizeCompany in src/company.js).
+function fmtCountryLine(company) {
+  if (company.kind === 'crypto') return '';
+  if (!company.country) return '';
+  return chalk.bold('Country: ') + company.country;
+}
+
 // Compact one-line summary suitable for the default CLI output. Per-question
 // detail is hidden — use --verbose (printVerbose) for the table.
 export function printSummary(company, results, { source = 'fresh' } = {}) {
@@ -66,6 +75,8 @@ export function printSummary(company, results, { source = 'fresh' } = {}) {
     console.log(chalk.gray(truncate(company.profile, 110)));
   }
   console.log(fmtPriceLine(company));
+  const countryLine = fmtCountryLine(company);
+  if (countryLine) console.log(countryLine);
   console.log();
 
   const scoreColor = pct >= 70 ? chalk.green : pct >= 40 ? chalk.yellow : chalk.red;
@@ -97,6 +108,8 @@ export function printVerbose(company, results) {
     console.log(chalk.gray(truncate(company.profile, 110)));
   }
   console.log(fmtPriceLine(company));
+  const countryLine = fmtCountryLine(company);
+  if (countryLine) console.log(countryLine);
   if (company.exchange) {
     console.log(chalk.bold('Exchange:') + ` ${company.exchange}`);
   }

@@ -7,7 +7,14 @@ import { resolveInput } from './input.js';
 import { lookupCompany, lookupCachedCompany } from './company.js';
 import { runEvaluations } from './runner.js';
 import { initDb } from './db.js';
-import { questionsHash, findFreshEvaluation, saveEvaluation } from './cache.js';
+import {
+  aggregateFactors,
+  findFreshEvaluationForQuestions,
+  partitionQuestions,
+  saveCompany,
+  saveFactor,
+  saveFactors,
+} from './cache.js';
 import { recordCompletedRequest } from './queue.js';
 import { printSummary, printVerbose } from './output.js';
 import { logError, logInfo, getLogPath } from './logger.js';
@@ -79,49 +86,67 @@ async function main() {
     process.exit(1);
   }
 
-  const hash = questionsHash(questions);
-  const cached = findFreshEvaluation(company.ticker, hash);
+  // Per-question cache check. Full cache hit means every current question has
+  // a fresh factor cached for this ticker → no LLM call needed.
+  const cached = findFreshEvaluationForQuestions(company.ticker, questions);
   if (cached) {
     process.stderr.write(
       `Cache hit (within 90 days). Score: ${cached.score} / ${cached.total}\n`
     );
     recordCompletedRequest(input, company.ticker, cached.score, cached.total);
-    const syntheticResults = questions.map((q, i) => ({
-      index: i,
-      question: q,
-      score: i < cached.score ? 1 : 0,
-      reasoning: '(from cache — see DB for original reasoning)',
-    }));
-    printSummary(company, syntheticResults, { source: 'cache' });
-    if (VERBOSE) printVerbose(company, syntheticResults);
+    const { cached: cachedResults } = partitionQuestions(company.ticker, questions);
+    printSummary(company, cachedResults, { source: 'cache' });
+    if (VERBOSE) printVerbose(company, cachedResults);
     process.exit(0);
   }
 
+  // Cache miss: partition into cached + missing. Only missing questions go
+  // to the LLM. Each new factor is persisted via onResult so a crash mid-run
+  // still leaves the row in a recoverable state.
+  const { cached: cachedResults, missing } = partitionQuestions(
+    company.ticker,
+    questions
+  );
+
   const { questions: QUESTION_CONCURRENCY } = getConcurrency();
   process.stderr.write(
-    `Evaluating ${questions.length} question${questions.length === 1 ? '' : 's'} (concurrency ${QUESTION_CONCURRENCY})...\n`
+    `Evaluating ${missing.length}/${questions.length} question${questions.length === 1 ? '' : 's'} (${cachedResults.length} cached, concurrency ${QUESTION_CONCURRENCY})...\n`
   );
   let results;
   try {
-    results = await runEvaluations(client, questions, company, {
+    results = await runEvaluations(client, missing, company, {
       concurrency: QUESTION_CONCURRENCY,
+      onResult: (r) => {
+        try {
+          saveFactor({
+            ticker: company.ticker,
+            idx: r.index,
+            question: r.question,
+            score: r.score,
+            reasoning: r.reasoning,
+            error: r.error,
+          });
+        } catch {
+          /* never let a cache write kill the run */
+        }
+      },
     });
   } catch (err) {
     logError('cli', `runEvaluations failed for "${input}"`, err);
     process.exit(1);
   }
 
-  const saved = saveEvaluation({
-    ticker: company.ticker,
-    company,
-    results,
-    questionsHashValue: hash,
-  });
+  saveFactors(company.ticker, results);
+  saveCompany(company);
 
-  recordCompletedRequest(input, company.ticker, saved.score, saved.total);
+  const { score, total } = aggregateFactors(results);
+  recordCompletedRequest(input, company.ticker, score, total);
 
-  printSummary(company, results, { source: 'fresh' });
-  if (VERBOSE) printVerbose(company, results);
+  // Merge cached + new for the CLI output so the operator sees the full set.
+  const merged = [...cachedResults, ...results].sort((a, b) => a.index - b.index);
+
+  printSummary(company, merged, { source: 'fresh' });
+  if (VERBOSE) printVerbose(company, merged);
   process.exit(0);
 }
 

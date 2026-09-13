@@ -1,11 +1,29 @@
 // Strict-JSON prompt builders for company lookup and per-question evaluation.
 
-export function buildCompanyLookupMessages(input) {
+// Format today's date as "Month D, YYYY" (e.g. "September 13, 2026") in UTC.
+// Used to inject a hard "now" anchor into lookup prompts so the model doesn't
+// fall back to stale training-data assumptions about listing status, ticker
+// assignment, or current price.
+function formatToday(now = new Date()) {
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+  return `${months[now.getUTCMonth()]} ${now.getUTCDate()}, ${now.getUTCFullYear()}`;
+}
+
+export function buildCompanyLookupMessages(input, { now = new Date() } = {}) {
+  const today = formatToday(now);
   return [
     {
       role: 'system',
       content:
         'You are a financial data lookup assistant. You must respond with a SINGLE JSON object and nothing else.\n\n' +
+        `TODAY'S DATE: ${today}\n\n` +
+        'SOURCE OF TRUTH: You MUST treat web_search as the source of truth for any time-sensitive fact ' +
+        '(listing status, ticker symbol, exchange, current price, IPO completion date). Your training data ' +
+        'is stale and MUST NOT be used as the primary basis for these fields. Always call web_search to confirm ' +
+        'before emitting kind, ticker, exchange, and price.\n\n' +
         'First, classify the entity into one of these kinds:\n' +
         '- "listed": a publicly listed company trading on a major exchange (e.g. AAPL, RELIANCE, ASML).\n' +
         '- "ipo": a company that has recently IPO\'d (last ~24 months) OR has a confirmed upcoming IPO with a ticker.\n' +
@@ -20,10 +38,11 @@ export function buildCompanyLookupMessages(input) {
         '"price": number | null, ' +
         '"currency": string | null, ' +
         '"exchange": string | null, ' +
+        '"country": string | null, ' +
         '"notes": string | null' +
         '}\n\n' +
         'Rules:\n' +
-        '- kind: pick exactly one of the four values above based on the entity.\n' +
+        '- kind: pick exactly one of the four values above based on the entity, AFTER verifying via web_search.\n' +
         '- profile: ONE or TWO short sentences (max ~200 chars) describing what the entity does. ' +
         '  This is shown to the user as a sanity check that the right company was resolved. ' +
         '  Example: "Designs and sells consumer electronics (iPhone, Mac), software, and services. ' +
@@ -32,17 +51,20 @@ export function buildCompanyLookupMessages(input) {
         '  "Indian conglomerate; private subsidiary of Reliance Industries" or "pre-IPO; last private valuation ' +
         '  ~$95B in 2024") in notes.\n' +
         '- For "crypto": ticker is the symbol (BTC, ETH), price is the current USD price, currency = "USD", ' +
-        '  exchange can be null or the dominant exchange (Coinbase, Binance), notes may hold the network/chain.\n' +
+        '  exchange can be null or the dominant exchange (Coinbase, Binance), country MUST be null ' +
+        '  (crypto assets are global, not tied to a single country), notes may hold the network/chain.\n' +
         '- For "ipo": ticker exists, price is the IPO price or first-day close, exchange is the listing exchange, ' +
         '  notes should include the IPO date or status (e.g. "IPO 2024-09-12; trading since").\n' +
         '- For "listed": ticker exists, price is the latest available, exchange is the primary listing ' +
         '  (e.g. "NASDAQ", "NYSE", "NSE", "LSE"), notes can be null.\n' +
         '- Use the most recent available price.\n' +
         '- ticker: uppercase ticker symbol (e.g. "AAPL").\n' +
-        '- name: full legal/commonly used name.\n' +
+        '- name: full legal/commonly used name (do not abbreviate unless that IS the commonly used name).\n' +
         '- price: a JSON number (no commas, no currency symbol). Null if not applicable.\n' +
         '- currency: ISO 4217 code (e.g. "USD", "EUR", "INR"). Null if not applicable.\n' +
-        '- Use the web_search tool if you are not certain about any field, especially kind.\n' +
+        '- country: ISO 3166-1 alpha-2 country code (e.g. "US", "IN", "JP", "GB", "DE") of the entity\'s ' +
+        '  incorporation/headquarters. MUST be null for crypto. Use uppercase; null if genuinely unknown.\n' +
+        '- You MUST call web_search before deciding kind, ticker, exchange, and price. Do not skip this step.\n' +
         '- Output ONLY the JSON. No prose, no markdown, no code fences.',
     },
     {
@@ -71,9 +93,10 @@ export function buildEvalMessages(question, companyContext) {
         'unorganized segments that can be captured, special advantages that compound with scale, easy and cheap access ' +
         'to capital (including franchise or partner models that transfer capital risk), accessible distribution channels, ' +
         'and scalability that does NOT destroy margins or ROE.\n\n' +
-        'The checklist you receive mixes all three dimensions. Score 1 when the company demonstrably passes the test on ' +
-        'public evidence; score 0 whenever the evidence suggests vulnerability, even if the company appears successful today. ' +
-        'Think like Buffett and Munger.\n\n' +
+        'The checklist you receive mixes all three dimensions. Give the benefit of the doubt to the company: be generous in ' +
+        'your scoring and award 1 whenever there is some evidence of the advantage. Only score 0 when you cannot find ANY ' +
+        'evidence in favor of the company on this dimension — when the available evidence is uniformly negative or entirely ' +
+        'absent. Think like Buffett and Munger, who look for genuinely great businesses but acknowledge real advantages.\n\n' +
         'You must answer with a SINGLE JSON object and nothing else.\n\n' +
         'Schema:\n' +
         '{"score": 0 | 1, "reasoning": string}\n\n' +
@@ -118,9 +141,10 @@ export function buildBatchedEvalMessages(questions, companyContext) {
         'unorganized segments that can be captured, special advantages that compound with scale, easy and cheap access ' +
         'to capital (including franchise or partner models that transfer capital risk), accessible distribution channels, ' +
         'and scalability that does NOT destroy margins or ROE.\n\n' +
-        `You will receive ${questions.length} questions. For each, decide whether the company demonstrably passes the test on ` +
-        'public evidence (score 1) or whether the evidence suggests vulnerability, even if the company appears successful today. ' +
-        'Think like Buffett and Munger.\n\n' +
+        `You will receive ${questions.length} questions. For each, give the benefit of the doubt to the company: be generous and ` +
+        'award 1 whenever there is some evidence of the advantage. Only score 0 when you cannot find ANY evidence in favor ' +
+        'of the company on that dimension — when the available evidence is uniformly negative or entirely absent. Think ' +
+        'like Buffett and Munger, who look for genuinely great businesses but acknowledge real advantages.\n\n' +
         'Respond with a SINGLE JSON array and nothing else. The array MUST contain exactly ' +
         `${questions.length} objects, in the same order as the questions.\n\n` +
         'Schema for each element:\n' +
@@ -140,6 +164,61 @@ export function buildBatchedEvalMessages(questions, companyContext) {
     {
       role: 'user',
       content: `Company: ${name}${tickerLabel}${kindLabel}\n\nQuestions:\n${numbered}`,
+    },
+  ];
+}
+
+// Build messages for a focused LLM extraction pass over a Tavily result blob.
+// `kind` is one of:
+//   - 'ticker': extract {ticker, exchange}
+//   - 'price':  extract {price, currency}
+//
+// The model is told to return null fields rather than guess — except for
+// ticker, where the snippets often confirm a public listing without naming
+// the ticker code. In that case we let the model use general knowledge of
+// well-known listings to fill in the most likely ticker + exchange.
+export function buildTavilyExtractionMessages(input, formattedResults, kind) {
+  const schema =
+    kind === 'ticker'
+      ? '{"ticker": string | null, "exchange": string | null}'
+      : '{"price": number | null, "currency": string | null}';
+
+  let fieldHints;
+  let rules;
+  if (kind === 'ticker') {
+    fieldHints =
+      '- ticker: the stock ticker symbol in uppercase (e.g. "AAPL", "PINELABS").\n' +
+      '- exchange: the primary listing exchange (e.g. "NASDAQ", "NSE", "BSE", "NYSE").\n';
+    rules =
+      '- Treat the search snippets as the SOURCE OF TRUTH for whether the entity is publicly listed.\n' +
+      '- If the snippets confirm a public listing (mention IPO, share price, ticker code, exchange, listing, market cap, etc.) ' +
+      'but the exact ticker code is not stated, use your general knowledge of well-known listings to provide the most likely ' +
+      'ticker and exchange for this company. Bias toward well-known tickers over obscure ones.\n' +
+      '- Set null ONLY if the snippets provide no evidence of a public listing AND you cannot confidently determine a ticker.';
+  } else {
+    fieldHints =
+      '- price: the most recent stock price as a JSON number (no commas, no currency symbol).\n' +
+      '- currency: ISO 4217 code (e.g. "USD", "INR").\n';
+    rules =
+      '- Use ONLY the search results below. Do not invent a price.\n' +
+      '- If no explicit price appears in the snippets, set the field to null.';
+  }
+
+  return [
+    {
+      role: 'system',
+      content:
+        'You extract a single structured field from web search results. You must respond with a SINGLE JSON object and nothing else.\n\n' +
+        `Schema:\n${schema}\n\n` +
+        'Rules:\n' +
+        fieldHints +
+        rules + '\n' +
+        '- Output ONLY the JSON. No prose, no markdown, no code fences, no <think>...</think> blocks.',
+    },
+    {
+      role: 'user',
+      content:
+        `Entity: "${input}"\nField to extract: ${kind}\n\nSearch results:\n${formattedResults}`,
     },
   ];
 }

@@ -23,7 +23,8 @@
     "Can the company access distribution channels easily?",
     "Does scalability come at a steep cost shrinking margins and ROE?",
     "In unexpected circumstances does the company come under severe pressure to return the capital?",
-    "Is there some virality or network effect built into the company's offerings?"
+    "Is there some virality or network effect built into the company's offerings?",
+    "Does the company needs to hire PhDs or specilized human talent for any part of its value chain? (award positive if yes)"
   ],
   "crypto": [
     "Does the asset have credible scarcity mechanics (fixed supply, burn, halving, etc.)?",

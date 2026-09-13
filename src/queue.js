@@ -2,6 +2,11 @@
 // capped number of concurrent *requests* (each request internally still runs
 // its 23 questions with p-limit from settings inside runEvaluations).
 //
+// Per-question cache: before calling the LLM, check which questions already
+// have a fresh factor cached for this ticker. Only the missing ones are sent
+// to the model. The aggregator below combines cached + fresh results when
+// writing the requests row.
+//
 // On a 429 from any underlying call, we mark the current request as 'error',
 // set an in-memory `pausedUntil`, and the loop sleeps until then. The pause
 // state is in-memory only — process restarts wipe it. That's intentional:
@@ -10,9 +15,17 @@
 import { initDb, getDb, getStatements } from './db.js';
 import { getClient } from './client.js';
 import { loadQuestions } from './questions.js';
-import { lookupCompany, lookupCachedCompany } from './company.js';
+import { lookupCompany, lookupCachedCompany, enrichCompanyWithTavily } from './company.js';
 import { runEvaluations } from './runner.js';
-import { questionsHash, findFreshEvaluation, saveEvaluation } from './cache.js';
+import {
+  findCachedFactors,
+  findFreshEvaluationForQuestions,
+  partitionQuestions,
+  aggregateFactors,
+  saveCompany,
+  saveFactor,
+  saveFactors,
+} from './cache.js';
 import { RateLimitError } from './evaluator.js';
 import { logError, logWarn, logInfo, getLogPath } from './logger.js';
 import { getConcurrency } from './settings.js';
@@ -30,11 +43,10 @@ function sleep(ms) {
 }
 
 // Enqueue a new request for `input`. If we can resolve a cached company AND
-// find a fresh evaluation for it, the request is inserted as already done.
-// Otherwise it's pending and the processor will pick it up.
+// every current question has a fresh factor for it, the request is inserted
+// as already done. Otherwise it's pending and the processor will pick it up.
 export async function enqueueRequest(input) {
   initDb();
-  const s = getStatements();
   const trimmed = (input || '').trim();
   if (!trimmed) throw new Error('input is required');
 
@@ -58,24 +70,14 @@ export async function enqueueRequest(input) {
   // kind once it resolves the company.
   const kind = company?.kind || 'listed';
   const questions = loadQuestions(kind);
-  const hash = questionsHash(questions);
 
   const ticker = company?.ticker || null;
-  const cached = ticker ? findFreshEvaluation(ticker, hash) : null;
+  const cached = ticker ? findFreshEvaluationForQuestions(ticker, questions) : null;
 
-  const now = Date.now();
   if (cached) {
-    const id = s.insertRequest.run({
-      input: trimmed,
-      ticker,
-      status: 'done',
-      score: cached.score,
-      total: cached.total,
-      created_at: now,
-      updated_at: now,
-    }).lastInsertRowid;
+    const id = recordCompletedRequest(trimmed, ticker, cached.score, cached.total);
     return {
-      id: Number(id),
+      id,
       status: 'done',
       ticker,
       score: cached.score,
@@ -83,7 +85,8 @@ export async function enqueueRequest(input) {
     };
   }
 
-  const id = s.insertRequest.run({
+  const now = Date.now();
+  const id = getStatements().insertRequest.run({
     input: trimmed,
     ticker,
     status: 'pending',
@@ -116,48 +119,85 @@ async function processRequest(req, client, settings) {
       return fail(req.id, `Company lookup failed: ${err.message || err}`);
     }
   }
+
+  // Fallback: if the LLM couldn't resolve ticker or price (common for
+  // companies whose listing is past its training cutoff), try Tavily.
+  // Also runs when the LLM mis-classified as 'unlisted' — if Tavily finds a
+  // real ticker, the enrichment upgrades kind to 'listed' automatically.
+  // Best-effort: any error here is swallowed and the original (possibly
+  // partial) company is kept.
+  if (company && (!company.ticker || company.price == null)) {
+    try {
+      company = await enrichCompanyWithTavily(client, req.input, company);
+    } catch (err) {
+      logWarn(
+        'queue',
+        `Tavily enrichment failed for "${req.input}": ${err.message || err}`
+      );
+    }
+  }
+
   if (!company?.ticker) {
     if (shuttingDown) return;
     return fail(req.id, `Could not resolve a ticker for "${req.input}".`);
   }
 
   // Update the request row with the resolved ticker so getBest can join.
-  const db = getDb();
-  db.prepare(`UPDATE requests SET ticker = ?, updated_at = ? WHERE id = ?`)
+  getDb().prepare(`UPDATE requests SET ticker = ?, updated_at = ? WHERE id = ?`)
     .run(company.ticker, Date.now(), req.id);
 
   // Pick the question set that matches the entity kind. This is the key
   // per-request decision — company questions vs crypto questions.
   const questions = loadQuestions(company.kind);
-  const hash = questionsHash(questions);
 
-  // Cache check after lookup (a recent eval may exist for the resolved ticker
-  // against the same question set).
-  const cached = findFreshEvaluation(company.ticker, hash);
-  if (cached) {
-    s.completeRequest.run(cached.score, cached.total, Date.now(), Date.now(), req.id);
+  // Per-question cache check after lookup. A recent eval may exist for the
+  // resolved ticker against SOME of the current questions. We partition
+  // into cached (reuse) and missing (send to LLM).
+  const { cached: cachedResults, missing } = partitionQuestions(
+    company.ticker,
+    questions
+  );
+
+  // Build the seed partial-tally from cached factors so the live-progress UI
+  // shows the right numbers as the missing questions complete.
+  const partial = cachedResults.slice();
+  const pushProgress = () => {
+    const { score: liveScore, total: liveTotal } = aggregateFactors(partial);
+    s.updateRequestProgress.run(liveScore, liveTotal, Date.now(), req.id);
+  };
+
+  if (missing.length === 0) {
+    const { score, total } = aggregateFactors(cachedResults);
+    s.completeRequest.run(score, total, Date.now(), Date.now(), req.id);
+    logInfo(
+      'queue',
+      `request #${req.id} (${req.input}) cache hit: ${score}/${total} (${cachedResults.length} factors reused)`
+    );
     return;
   }
 
+  logInfo(
+    'queue',
+    `request #${req.id} (${req.input}) evaluating ${missing.length}/${questions.length} question(s) (${cachedResults.length} cached)`
+  );
+
   let results;
-  // Track each completed question so the UI can show partial scoring while
-  // the rest are still in flight. We accumulate locally and push the running
-  // tally to the requests row after every completion.
-  const partial = [];
-  const pushProgress = () => {
-    const liveScore = partial.reduce(
-      (acc, r) => acc + (r.error ? 0 : r.score === 1 ? 1 : 0),
-      0
-    );
-    const liveTotal = partial.filter((r) => !r.error).length;
-    getStatements().updateRequestProgress.run(
-      liveScore, liveTotal, Date.now(), req.id
-    );
-  };
   try {
-    results = await runEvaluations(client, questions, company, {
+    results = await runEvaluations(client, missing, company, {
       concurrency: settings.questions,
       onResult: (r) => {
+        try {
+          saveFactor({
+            ticker: company.ticker,
+            idx: r.index,
+            question: r.question,
+            score: r.score,
+            reasoning: r.reasoning,
+            error: r.error,
+          });
+        } catch {
+          /* never let a cache write kill the run */
+        }
         partial.push(r);
         try { pushProgress(); } catch { /* never let a UI write kill the run */ }
       },
@@ -168,14 +208,16 @@ async function processRequest(req, client, settings) {
     return fail(req.id, err.message || String(err));
   }
 
-  const saved = saveEvaluation({
-    ticker: company.ticker,
-    company,
-    results,
-    questionsHashValue: hash,
-  });
+  const saved = saveFactors(company.ticker, results);
+  // Persist company metadata so future requests see fresh name/price/country
+  // even when the cache-hit path is taken and the LLM is never invoked.
+  saveCompany(company);
 
   s.completeRequest.run(saved.score, saved.total, Date.now(), Date.now(), req.id);
+  logInfo(
+    'queue',
+    `request #${req.id} (${req.input}) done: ${saved.score}/${saved.total}`
+  );
 }
 
 function fail(id, message) {
@@ -316,22 +358,16 @@ export function getAllRequests(limit = 50) {
   return s.listRequestsAll.all(limit);
 }
 
-export function getBest(limit = 5, hashOrHashes) {
+// `kindCounts` is an array of two integers: the expected question counts for
+// (company, crypto). A ticker is "complete" against its kind when it has at
+// least `kindCounts[kindIndex]` distinct cached factors. The SQL reads
+// placeholders in the order (crypto, company), so we pass them in that order.
+export function getBest(limit = 5, kindCounts) {
   initDb();
   const s = getStatements();
-  // Accept either a single hash or an array (one per question set — company
-  // and crypto). Array form matches the bestByHashes prepared statement.
-  if (Array.isArray(hashOrHashes)) {
-    if (hashOrHashes.length !== 2) {
-      // bestByHashes is hardcoded for 2 kinds. If that changes, the SQL does.
-      return [];
-    }
-    return s.bestByHashes.all(hashOrHashes[0], hashOrHashes[1], limit);
-  }
-  if (typeof hashOrHashes === 'string') {
-    return s.bestByHash.all(hashOrHashes, limit);
-  }
-  return [];
+  if (!Array.isArray(kindCounts) || kindCounts.length !== 2) return [];
+  const [companyCount, cryptoCount] = kindCounts;
+  return s.bestByKindCounts.all(cryptoCount, companyCount, limit);
 }
 
 // Persist a 'done' row for an evaluation that completed outside the queue

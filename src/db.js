@@ -1,9 +1,15 @@
 // SQLite layer for stock-quality. Single shared connection (better-sqlite3 is
 // synchronous and thread-safe for single-process use). Tables live in this
 // module's migrations; prepared statements are exported for callers.
+//
+// evaluation_factors has been denormalized to cache per-question rather than
+// per-checklist: each row carries its own (ticker, question_hash,
+// evaluated_at). This means editing one question in questions.json only
+// invalidates that single factor for every ticker — the rest are reused.
 
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import Database from 'better-sqlite3';
 
 const DB_DIR = path.resolve('./data');
@@ -25,6 +31,7 @@ CREATE TABLE IF NOT EXISTS companies (
   price REAL,
   currency TEXT,
   exchange TEXT,
+  country TEXT,
   notes TEXT,
   fetched_at INTEGER
 );
@@ -43,11 +50,14 @@ CREATE TABLE IF NOT EXISTS evaluations (
 CREATE TABLE IF NOT EXISTS evaluation_factors (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   evaluation_id INTEGER,
+  ticker TEXT,
   idx INTEGER,
   question TEXT,
+  question_hash TEXT,
   score INTEGER,
   reasoning TEXT,
-  error TEXT
+  error TEXT,
+  evaluated_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS requests (
@@ -64,6 +74,68 @@ CREATE TABLE IF NOT EXISTS requests (
 );
 `;
 
+// Idempotent migrations applied on every initDb(). SQLite doesn't have IF NOT
+// EXISTS for ADD COLUMN, so we detect via PRAGMA table_info and run only the
+// ones still missing.
+function migrate(d) {
+  // companies.country (ISO 3166-1 alpha-2 code, null for crypto)
+  const companyCols = new Set(d.prepare(`PRAGMA table_info(companies)`).all().map((c) => c.name));
+  if (!companyCols.has('country')) {
+    d.exec(`ALTER TABLE companies ADD COLUMN country TEXT`);
+  }
+
+  const cols = new Set(d.prepare(`PRAGMA table_info(evaluation_factors)`).all().map((c) => c.name));
+  if (!cols.has('ticker')) {
+    d.exec(`ALTER TABLE evaluation_factors ADD COLUMN ticker TEXT`);
+  }
+  if (!cols.has('question_hash')) {
+    d.exec(`ALTER TABLE evaluation_factors ADD COLUMN question_hash TEXT`);
+  }
+  if (!cols.has('evaluated_at')) {
+    d.exec(`ALTER TABLE evaluation_factors ADD COLUMN evaluated_at INTEGER`);
+  }
+
+  // Backfill ticker + evaluated_at from the parent evaluations row. question_hash
+  // is computed in JS (one UPDATE per row) since SQLite has no built-in sha256.
+  // We only touch rows where ticker is still null, so re-running the migration
+  // is a no-op.
+  const stmt = d.prepare(`
+    SELECT f.id, f.question, e.ticker AS ticker, e.evaluated_at AS evaluated_at
+    FROM evaluation_factors f
+    LEFT JOIN evaluations e ON e.id = f.evaluation_id
+    WHERE f.ticker IS NULL OR f.question_hash IS NULL OR f.evaluated_at IS NULL
+  `);
+  const rows = stmt.all();
+  if (rows.length > 0) {
+    const updateTicker = d.prepare(
+      `UPDATE evaluation_factors SET ticker = ?, evaluated_at = ? WHERE id = ?`
+    );
+    const updateHash = d.prepare(
+      `UPDATE evaluation_factors SET question_hash = ? WHERE id = ?`
+    );
+    const txn = d.transaction(() => {
+      for (const r of rows) {
+        if (r.ticker != null) {
+          updateTicker.run(r.ticker, r.evaluated_at, r.id);
+        }
+        updateHash.run(sha256(JSON.stringify(r.question ?? '')), r.id);
+      }
+    });
+    txn();
+  }
+
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_evaluation_factors_ticker_question_hash
+      ON evaluation_factors(ticker, question_hash);
+    CREATE INDEX IF NOT EXISTS ix_evaluation_factors_ticker_idx
+      ON evaluation_factors(ticker, idx);
+  `);
+}
+
+function sha256(s) {
+  return crypto.createHash('sha256').update(s).digest('hex');
+}
+
 export function initDb() {
   if (db) return db;
   ensureDir();
@@ -71,6 +143,7 @@ export function initDb() {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
+  migrate(db);
   stmts = prepare(db);
   return db;
 }
@@ -78,8 +151,8 @@ export function initDb() {
 function prepare(d) {
   return {
     upsertCompany: d.prepare(`
-      INSERT INTO companies (ticker, name, kind, profile, price, currency, exchange, notes, fetched_at)
-      VALUES (@ticker, @name, @kind, @profile, @price, @currency, @exchange, @notes, @fetched_at)
+      INSERT INTO companies (ticker, name, kind, profile, price, currency, exchange, country, notes, fetched_at)
+      VALUES (@ticker, @name, @kind, @profile, @price, @currency, @exchange, @country, @notes, @fetched_at)
       ON CONFLICT(ticker) DO UPDATE SET
         name=excluded.name,
         kind=excluded.kind,
@@ -87,34 +160,29 @@ function prepare(d) {
         price=excluded.price,
         currency=excluded.currency,
         exchange=excluded.exchange,
+        country=excluded.country,
         notes=excluded.notes,
         fetched_at=excluded.fetched_at
     `),
     findCompany: d.prepare(`SELECT * FROM companies WHERE ticker = ?`),
-    insertEvaluation: d.prepare(`
-      INSERT INTO evaluations (ticker, questions_hash, score, total, evaluated_at, expires_at)
-      VALUES (@ticker, @questions_hash, @score, @total, @evaluated_at, @expires_at)
-      ON CONFLICT(ticker, questions_hash) DO UPDATE SET
+
+    // Per-factor UPSERT. evaluation_id is left NULL — the table is now self-
+    // keyed on (ticker, question_hash) and the column is kept only to avoid a
+    // destructive rebuild of legacy rows.
+    upsertFactor: d.prepare(`
+      INSERT INTO evaluation_factors
+        (ticker, idx, question, question_hash, score, reasoning, error, evaluated_at)
+      VALUES
+        (@ticker, @idx, @question, @question_hash, @score, @reasoning, @error, @evaluated_at)
+      ON CONFLICT(ticker, question_hash) DO UPDATE SET
+        idx=excluded.idx,
+        question=excluded.question,
         score=excluded.score,
-        total=excluded.total,
-        evaluated_at=excluded.evaluated_at,
-        expires_at=excluded.expires_at
+        reasoning=excluded.reasoning,
+        error=excluded.error,
+        evaluated_at=excluded.evaluated_at
     `),
-    findFreshEvaluation: d.prepare(`
-      SELECT score, total, evaluated_at, expires_at
-      FROM evaluations
-      WHERE ticker = ? AND questions_hash = ? AND expires_at > ?
-    `),
-    findEvaluationAny: d.prepare(`
-      SELECT id, score, total, evaluated_at, expires_at
-      FROM evaluations
-      WHERE ticker = ? AND questions_hash = ?
-    `),
-    deleteFactorsForEvaluation: d.prepare(`DELETE FROM evaluation_factors WHERE evaluation_id = ?`),
-    insertFactor: d.prepare(`
-      INSERT INTO evaluation_factors (evaluation_id, idx, question, score, reasoning, error)
-      VALUES (@evaluation_id, @idx, @question, @score, @reasoning, @error)
-    `),
+    deleteFactorsForTicker: d.prepare(`DELETE FROM evaluation_factors WHERE ticker = ?`),
 
     insertRequest: d.prepare(`
       INSERT INTO requests (input, ticker, status, score, total, created_at, updated_at)
@@ -125,7 +193,8 @@ function prepare(d) {
       SELECT * FROM (
         SELECT r.*,
           c.name AS company_name, c.kind AS company_kind, c.profile AS company_profile,
-          (SELECT MAX(evaluated_at) FROM evaluations WHERE ticker = r.ticker) AS evaluated_at,
+          c.country AS company_country,
+          (SELECT MAX(evaluated_at) FROM evaluation_factors WHERE ticker = r.ticker) AS evaluated_at,
           ROW_NUMBER() OVER (
             PARTITION BY COALESCE(r.ticker, LOWER(r.input))
             ORDER BY
@@ -183,34 +252,48 @@ function prepare(d) {
       UPDATE requests SET status='pending', updated_at=? WHERE status='processing'
     `),
 
-    bestByHash: d.prepare(`
-      SELECT r.id, r.input, r.ticker, c.name, c.kind, c.profile, r.status, r.score, r.total, r.completed_at, e.evaluated_at
+    // Best list: per-ticker "complete evaluation" is determined by whether the
+    // ticker has at least `?` (count for the matching kind) distinct cached
+    // factors. The `?` placeholder is filled by the kind-appropriate count
+    // (company or crypto). Tickers with no kind yet (e.g. a request whose
+    // company row was deleted) are scored against the company count.
+    bestByKindCounts: d.prepare(`
+      SELECT r.id, r.input, r.ticker, c.name, c.kind, c.profile, c.country, r.status, r.score, r.total, r.completed_at,
+             (SELECT MAX(evaluated_at) FROM evaluation_factors WHERE ticker = r.ticker) AS evaluated_at,
+             (SELECT COUNT(DISTINCT question_hash) FROM evaluation_factors WHERE ticker = r.ticker) AS factor_count
       FROM requests r
-      JOIN evaluations e ON e.ticker = r.ticker AND e.questions_hash = ?
-      LEFT JOIN companies c ON c.ticker = r.ticker
-      WHERE r.status = 'done' AND r.score IS NOT NULL
-      ORDER BY r.score DESC, r.completed_at DESC
-      LIMIT ?
-    `),
-    bestByHashes: d.prepare(`
-      SELECT r.id, r.input, r.ticker, c.name, c.kind, c.profile, r.status, r.score, r.total, r.completed_at, e.evaluated_at
-      FROM requests r
-      JOIN evaluations e ON e.ticker = r.ticker
       LEFT JOIN companies c ON c.ticker = r.ticker
       WHERE r.status = 'done'
         AND r.score IS NOT NULL
-        AND (e.questions_hash = ? OR e.questions_hash = ?)
+        AND (
+          CASE WHEN c.kind = 'crypto' THEN
+            (SELECT COUNT(DISTINCT question_hash) FROM evaluation_factors WHERE ticker = r.ticker) >= ?
+          ELSE
+            (SELECT COUNT(DISTINCT question_hash) FROM evaluation_factors WHERE ticker = r.ticker) >= ?
+          END
+        )
       ORDER BY r.score DESC, r.completed_at DESC
       LIMIT ?
     `),
-    factorsByTickerHash: d.prepare(`
-      SELECT f.idx, f.question, f.score, f.reasoning, f.error
-      FROM evaluation_factors f
-      JOIN evaluations e ON e.id = f.evaluation_id
-      WHERE e.ticker = ? AND e.questions_hash = ?
-      ORDER BY f.idx ASC
-    `),
   };
+}
+
+// Factors for a ticker whose question_hash is in the given set, ordered by
+// idx ASC. Built at runtime because the IN-list length varies per kind
+// (typically ~24). The ix_evaluation_factors_ticker_idx index handles the
+// ticker+idx ordering; the question_hash filter is selective enough that the
+// full scan stays fast for small question sets.
+export function factorsByTickerAndHashes(ticker, hashes) {
+  const d = getDb();
+  if (!ticker || !Array.isArray(hashes) || hashes.length === 0) return [];
+  const placeholders = hashes.map(() => '?').join(',');
+  const sql = `
+    SELECT ticker, idx, question, question_hash, score, reasoning, error, evaluated_at
+    FROM evaluation_factors
+    WHERE ticker = ? AND question_hash IN (${placeholders})
+    ORDER BY idx ASC
+  `;
+  return d.prepare(sql).all(ticker, ...hashes);
 }
 
 export function getDb() {

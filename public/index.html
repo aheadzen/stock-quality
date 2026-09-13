@@ -165,13 +165,17 @@
     .kind-badge-unlisted { background: var(--gray); }
     .kind-badge-crypto { background: var(--magenta); }
 
-    .card-profile {
-      color: var(--muted);
-      font-size: 13px;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
+    .card-country {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: var(--text);
+      background: #f1f5f9;
+      border: 1px solid var(--border);
     }
     .card-time {
       margin-top: 6px;
@@ -371,6 +375,17 @@
     .factors-row .score.good { color: var(--green); }
     .factors-row .score.bad { color: var(--red); }
     .factors-row .score.err { color: var(--gray); }
+    .factors-locked {
+      padding: 24px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-top: 1px dashed var(--border);
+      border-radius: 0 0 10px 10px;
+      text-align: center;
+    }
+    .factors-locked h3 { margin: 0 0 6px; font-size: 16px; color: var(--text); }
+    .factors-locked p { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+    .factors-locked .passcode-form { max-width: 280px; margin: 0 auto; }
   </style>
 </head>
 <body>
@@ -461,7 +476,7 @@
         <div class="status" id="status"></div>
         <div class="dashboard">
           <div class="column">
-            <h2>Ongoing</h2>
+            <h2>Recent</h2>
             <div id="requests-list"></div>
           </div>
           <div class="column">
@@ -540,6 +555,26 @@
       });
     }
 
+    function renderFactorRow(f) {
+      const scoreCell = f.error
+        ? '<span class="score err">ERR</span>'
+        : f.score === 1
+          ? '<span class="score good">1</span>'
+          : '<span class="score bad">0</span>';
+      const reasoningClass = f.error ? 'reasoning error' : 'reasoning';
+      const reasoningText = f.error ? f.error : f.reasoning;
+      return `
+        <div class="factors-row">
+          <div class="idx">#${f.idx + 1}</div>
+          <div>
+            <div class="question">${escapeHtml(f.question)}</div>
+            <div class="${reasoningClass}">${escapeHtml(reasoningText)}</div>
+          </div>
+          <div>${scoreCell}</div>
+        </div>
+      `;
+    }
+
     async function renderDetailBody(ticker, errorMsg = '') {
       const body = document.getElementById('detail-body');
       body.innerHTML = '<div class="empty">Loading…</div>';
@@ -568,11 +603,15 @@
       }
 
       const kind = header.kind || 'listed';
+      const detailCountry = (kind !== 'crypto' && header.country)
+        ? `<span class="card-country" title="Country of incorporation/headquarters">${escapeHtml(header.country)}</span>`
+        : '';
       const headerHtml = `
         <div class="detail-header">
           <span class="card-name">${escapeHtml(header.name || ticker)}</span>
           <span class="card-ticker">(${escapeHtml(ticker)})</span>
           <span class="kind-badge kind-badge-${kind}">${escapeHtml(kind.toUpperCase())}</span>
+          ${detailCountry}
         </div>
         <div class="detail-meta">${escapeHtml(header.profile || '')}</div>
         <div class="detail-summary">
@@ -588,33 +627,86 @@
       const storedPasscode = sessionStorage.getItem(PASS_KEY) || '';
 
       if (!storedPasscode) {
-        body.innerHTML = headerHtml + `
-          <div class="passcode-prompt">
-            <h3>Enter 4-digit passcode</h3>
-            <p>Required to view per-question reasoning.</p>
-            <form class="passcode-form" id="passcode-form">
-              <input type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" autocomplete="off" id="passcode-input" autofocus />
-              <button type="submit">Unlock</button>
-            </form>
-            <div class="passcode-error" id="passcode-error">${escapeHtml(errorMsg)}</div>
-          </div>
-        `;
-        const form = document.getElementById('passcode-form');
-        const input = document.getElementById('passcode-input');
-        form.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const typed = input.value.trim();
-          if (!typed) {
-            document.getElementById('passcode-error').textContent = 'Please enter a 4-digit code.';
+        // No passcode yet — fetch the public preview (first 3 factors).
+        // If more factors exist, append a locked section with the passcode
+        // form so the user can unlock the full report.
+        let preview;
+        try {
+          const res = await fetch('/api/report/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ticker }),
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            body.innerHTML = headerHtml + `<div class="empty">${escapeHtml(j.error || `HTTP ${res.status}`)}</div>`;
             return;
           }
-          sessionStorage.setItem(PASS_KEY, typed);
-          await renderDetailBody(ticker);
-        });
+          preview = await res.json();
+        } catch (err) {
+          body.innerHTML = headerHtml + `<div class="empty">Network error: ${escapeHtml(err.message)}</div>`;
+          return;
+        }
+
+        // Server returns 404 for empty factors, so by the time we reach here
+        // preview.factors is guaranteed non-empty.
+        const factorsHtml = preview.factors.map(renderFactorRow).join('');
+        const remaining = (preview.total || 0) - preview.factors.length;
+        const lockedHtml = remaining > 0
+          ? `<div class="factors-locked">
+              <h3>${remaining} more question${remaining === 1 ? '' : 's'} behind the passcode</h3>
+              <p>Enter the 4-digit code to unlock the full report.</p>
+              <form class="passcode-form" id="passcode-form">
+                <input type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" autocomplete="off" id="passcode-input" autofocus />
+                <button type="submit">Unlock</button>
+              </form>
+              <div class="passcode-error" id="passcode-error">${escapeHtml(errorMsg)}</div>
+            </div>`
+          : '';
+
+        body.innerHTML = headerHtml + `<div class="factors-table">${factorsHtml}</div>${lockedHtml}`;
+
+        if (remaining > 0) {
+          const form = document.getElementById('passcode-form');
+          const input = document.getElementById('passcode-input');
+          form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const typed = input.value.trim();
+            if (!typed) {
+              document.getElementById('passcode-error').textContent = 'Please enter a 4-digit code.';
+              return;
+            }
+            const errEl = document.getElementById('passcode-error');
+            errEl.textContent = 'Checking…';
+            try {
+              const res = await fetch('/api/report', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticker, passcode: typed }),
+              });
+              if (res.status === 403) {
+                errEl.textContent = 'Wrong passcode. Try again.';
+                input.value = '';
+                input.focus();
+                return;
+              }
+              if (!res.ok) {
+                const j = await res.json().catch(() => ({}));
+                errEl.textContent = j.error || `HTTP ${res.status}`;
+                return;
+              }
+              // Valid: cache it and re-render the full report.
+              sessionStorage.setItem(PASS_KEY, typed);
+              await renderDetailBody(ticker);
+            } catch (err) {
+              errEl.textContent = `Network error: ${err.message}`;
+            }
+          });
+        }
         return;
       }
 
-      // Have a stored passcode — fetch factors.
+      // Have a stored passcode — fetch the full report.
       let report;
       try {
         const res = await fetch('/api/report', {
@@ -637,25 +729,7 @@
         return;
       }
 
-      const factorsHtml = report.factors.map((f) => {
-        const scoreCell = f.error
-          ? '<span class="score err">ERR</span>'
-          : f.score === 1
-            ? '<span class="score good">1</span>'
-            : '<span class="score bad">0</span>';
-        const reasoningClass = f.error ? 'reasoning error' : 'reasoning';
-        const reasoningText = f.error ? f.error : f.reasoning;
-        return `
-          <div class="factors-row">
-            <div class="idx">#${f.idx + 1}</div>
-            <div>
-              <div class="question">${escapeHtml(f.question)}</div>
-              <div class="${reasoningClass}">${escapeHtml(reasoningText)}</div>
-            </div>
-            <div>${scoreCell}</div>
-          </div>
-        `;
-      }).join('');
+      const factorsHtml = report.factors.map(renderFactorRow).join('');
 
       body.innerHTML = headerHtml + `<div class="factors-table">${factorsHtml}</div>`;
     }
@@ -666,6 +740,9 @@
       const kind = r.kind || 'listed';
       const ticker = r.ticker ? `<span class="card-ticker">(${escapeHtml(r.ticker)})</span>` : '';
       const badge = `<span class="kind-badge kind-badge-${kind}">${escapeHtml(kind.toUpperCase())}</span>`;
+      const country = (kind !== 'crypto' && r.country)
+        ? `<span class="card-country" title="Country of incorporation/headquarters">${escapeHtml(r.country)}</span>`
+        : '';
       const name = escapeHtml(r.name || r.input || '');
       const profile = escapeHtml(r.profile || '');
       const pill = showStatus
@@ -691,6 +768,7 @@
               <span class="card-name">${name}</span>
               ${ticker}
               ${badge}
+              ${country}
               ${pill}
             </div>
             ${profile ? `<div class="card-profile">${profile}</div>` : ''}
@@ -830,7 +908,7 @@
             input.focus();
             await refreshAll();
           } else {
-            setStatus(`Queued #${j.id}. Watch the Ongoing column.`);
+            setStatus(`Queued #${j.id}. Watch the Recent column.`);
             input.value = '';
             input.focus();
             await refreshAll();
