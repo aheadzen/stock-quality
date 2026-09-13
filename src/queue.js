@@ -75,6 +75,11 @@ export async function enqueueRequest(input) {
   const cached = ticker ? findFreshEvaluationForQuestions(ticker, questions) : null;
 
   if (cached) {
+    // Even on a full cache hit, persist the company metadata — `lookupCompany`
+    // ran above and may have refreshed a stale or missing `companies` row.
+    // Without this, an orphan ticker (factors cached, no company row) stays
+    // orphaned forever and the UI falls back to the raw user input as the name.
+    if (company) saveCompany(company);
     const id = recordCompletedRequest(trimmed, ticker, cached.score, cached.total);
     return {
       id,
@@ -168,6 +173,8 @@ async function processRequest(req, client, settings) {
 
   if (missing.length === 0) {
     const { score, total } = aggregateFactors(cachedResults);
+    // Persist the (possibly fresh) company metadata even on a full cache hit.
+    saveCompany(company);
     s.completeRequest.run(score, total, Date.now(), Date.now(), req.id);
     logInfo(
       'queue',

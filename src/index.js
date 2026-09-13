@@ -93,6 +93,10 @@ async function main() {
     process.stderr.write(
       `Cache hit (within 90 days). Score: ${cached.score} / ${cached.total}\n`
     );
+    // Persist company metadata even on a full cache hit so the ticker stays
+    // visible in the web UI with its full name (see src/queue.js for the
+    // matching path).
+    saveCompany(company);
     recordCompletedRequest(input, company.ticker, cached.score, cached.total);
     const { cached: cachedResults } = partitionQuestions(company.ticker, questions);
     printSummary(company, cachedResults, { source: 'cache' });
