@@ -386,6 +386,259 @@
     .factors-locked h3 { margin: 0 0 6px; font-size: 16px; color: var(--text); }
     .factors-locked p { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
     .factors-locked .passcode-form { max-width: 280px; margin: 0 auto; }
+
+    /* Header bar (sign-in / user menu) */
+    .header-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .header-bar .header-links {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    .header-bar .nav-link {
+      background: none;
+      border: none;
+      padding: 6px 10px;
+      color: var(--accent);
+      font-size: 14px;
+      cursor: pointer;
+      border-radius: 6px;
+    }
+    .header-bar .nav-link:hover { background: #f1f5f9; }
+    .header-bar .nav-link.signin {
+      background: var(--accent);
+      color: white;
+    }
+    .header-bar .nav-link.signin:hover { background: var(--accent-hover); }
+    .header-bar .user-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .role-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      background: var(--accent);
+      color: white;
+    }
+    .role-badge.user { background: var(--gray); }
+
+    /* Auth modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+    }
+    .modal {
+      background: var(--panel);
+      border-radius: 12px;
+      padding: 24px;
+      width: min(420px, calc(100vw - 32px));
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.25);
+    }
+    .modal h2 { margin: 0 0 8px; font-size: 20px; }
+    .modal p { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+    .modal .form-field { margin-bottom: 12px; }
+    .modal .form-field label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .modal input { width: 100%; }
+    .modal .actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 8px;
+    }
+    .modal .toggle {
+      margin-top: 12px;
+      text-align: center;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .modal .toggle button {
+      background: none;
+      color: var(--accent);
+      padding: 0;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .modal-error {
+      color: var(--red);
+      font-size: 13px;
+      margin-top: 8px;
+      min-height: 18px;
+    }
+
+    /* Multi-stock form */
+    .multi-form textarea {
+      width: 100%;
+      min-height: 110px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      outline: none;
+      resize: vertical;
+    }
+    .multi-form textarea:focus { border-color: var(--accent); }
+    .multi-form .file-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+      font-size: 13px;
+      color: var(--muted);
+      flex-wrap: wrap;
+    }
+    .multi-form .file-row input[type="file"] {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .multi-form .file-row .file-meta { font-style: italic; }
+    .multi-form .row-controls {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .multi-form .row-controls input[type="text"] {
+      flex: 1;
+      min-width: 200px;
+    }
+    .auth-banner {
+      background: #eef2ff;
+      border: 1px solid #c7d2fe;
+      color: #1e3a8a;
+      padding: 10px 14px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+
+    /* Lists */
+    .list-detail-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .list-table {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .list-table-row {
+      display: grid;
+      grid-template-columns: 110px 1fr 110px 80px 80px 100px;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      align-items: center;
+    }
+    .list-table-row.head {
+      background: #f8fafc;
+      font-weight: 600;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .list-table-row:last-child { border-bottom: none; }
+    .list-table-row .cell-actions { display: flex; gap: 6px; justify-content: flex-end; }
+    .list-table-row .cell-ticker { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+    @media (max-width: 720px) {
+      .list-table-row { grid-template-columns: 1fr 1fr; }
+      .list-table-row .cell-country, .list-table-row .cell-kind, .list-table-row .cell-score { grid-column: span 1; }
+    }
+
+    /* Admin */
+    .admin-section { margin-bottom: 32px; }
+    .admin-section h2 { margin: 0 0 12px; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+    .admin-table { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .admin-row {
+      display: grid;
+      grid-template-columns: 1fr 100px 160px 200px;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      align-items: center;
+    }
+    .admin-row.head {
+      background: #f8fafc;
+      font-weight: 600;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .admin-row:last-child { border-bottom: none; }
+    .admin-row .cell-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+    /* Dropdown */
+    .dropdown {
+      position: relative;
+      display: inline-block;
+    }
+    .dropdown-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 6px);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+      padding: 6px 0;
+      min-width: 180px;
+      z-index: 30;
+    }
+    .dropdown-menu button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 8px 14px;
+      background: none;
+      color: var(--text);
+      border: none;
+      font-size: 14px;
+      border-radius: 0;
+      cursor: pointer;
+    }
+    .dropdown-menu button:hover:not(:disabled) { background: #f1f5f9; color: var(--accent); }
+
+    /* Inline status badge (e.g., for export result) */
+    .inline-status {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
@@ -457,6 +710,9 @@
       const parts = h.split('/').filter(Boolean);
       if (parts.length === 0) return { name: 'dashboard' };
       if (parts[0] === 'stock' && parts[1]) return { name: 'detail', ticker: decodeURIComponent(parts[1]).toUpperCase() };
+      if (parts[0] === 'lists' && parts.length === 1) return { name: 'lists' };
+      if (parts[0] === 'lists' && parts[1]) return { name: 'listDetail', id: Number(parts[1]) };
+      if (parts[0] === 'admin') return { name: 'admin' };
       return { name: 'dashboard' };
     }
 
@@ -464,15 +720,193 @@
       location.hash = hash;
     }
 
+    // --- auth state ---
+    let currentUser = null;
+
+    async function fetchMe() {
+      try {
+        const res = await fetch('/api/auth/me');
+        if (!res.ok) { currentUser = null; return null; }
+        const j = await res.json();
+        currentUser = j.user || null;
+        return currentUser;
+      } catch (err) {
+        currentUser = null;
+        return null;
+      }
+    }
+
+    function renderHeader() {
+      const right = currentUser
+        ? `<div class="dropdown" id="user-dropdown">
+             <span class="user-chip" id="user-chip">
+               <span>${escapeHtml(currentUser.email)}</span>
+               <span class="role-badge ${currentUser.role === 'admin' ? 'admin' : 'user'}">${escapeHtml(currentUser.role)}</span>
+             </span>
+             <div class="dropdown-menu" id="user-menu" style="display:none;">
+               <button data-nav="#/lists">My Lists</button>
+               ${currentUser.role === 'admin' ? '<button data-nav="#/admin">Admin</button>' : ''}
+               <button data-action="logout-all">Logout all sessions</button>
+               <button data-action="logout">Logout</button>
+             </div>
+           </div>`
+        : `<button class="nav-link signin" id="signin-btn">Sign in</button>`;
+      return `
+        <div class="header-bar">
+          <div class="header-links">
+            <button class="nav-link" data-nav="#/">Dashboard</button>
+            ${currentUser ? '<button class="nav-link" data-nav="#/lists">My Lists</button>' : ''}
+            ${currentUser && currentUser.role === 'admin' ? '<button class="nav-link" data-nav="#/admin">Admin</button>' : ''}
+          </div>
+          <div class="header-links">${right}</div>
+        </div>
+      `;
+    }
+
+    function wireHeader() {
+      const signin = document.getElementById('signin-btn');
+      if (signin) signin.addEventListener('click', () => openAuthModal('login'));
+      const chip = document.getElementById('user-chip');
+      const menu = document.getElementById('user-menu');
+      if (chip && menu) {
+        chip.addEventListener('click', (e) => {
+          e.stopPropagation();
+          menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+        });
+        document.addEventListener('click', () => { menu.style.display = 'none'; }, { once: true });
+        menu.addEventListener('click', async (e) => {
+          const btn = e.target.closest('button');
+          if (!btn) return;
+          const nav = btn.getAttribute('data-nav');
+          const action = btn.getAttribute('data-action');
+          menu.style.display = 'none';
+          if (nav) navigate(nav);
+          if (action === 'logout') {
+            await fetch('/api/auth/logout', { method: 'POST' });
+            currentUser = null;
+            navigate('#/');
+          }
+          if (action === 'logout-all') {
+            await fetch('/api/auth/logout-all', { method: 'POST' });
+            currentUser = null;
+            navigate('#/');
+          }
+        });
+      }
+      document.querySelectorAll('button[data-nav]').forEach((b) => {
+        if (b.closest('.header-bar')) {
+          b.addEventListener('click', (e) => {
+            const nav = b.getAttribute('data-nav');
+            if (nav) navigate(nav);
+          });
+        }
+      });
+    }
+
+    function openAuthModal(mode) {
+      const root = document.getElementById('root');
+      const wrap = document.createElement('div');
+      wrap.className = 'modal-backdrop';
+      wrap.id = 'auth-modal';
+      wrap.innerHTML = `
+        <div class="modal" id="auth-modal-card">
+          <h2 id="auth-modal-title">${mode === 'login' ? 'Sign in' : 'Create account'}</h2>
+          <p>${mode === 'login' ? 'Sign in to evaluate multiple stocks and group them into lists.' : 'Register to evaluate multiple stocks and group them into lists.'}</p>
+          <form id="auth-form">
+            <div class="form-field">
+              <label for="auth-email">Email</label>
+              <input type="email" id="auth-email" autocomplete="email" required />
+            </div>
+            <div class="form-field">
+              <label for="auth-password">Password (min 8 chars)</label>
+              <input type="password" id="auth-password" autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}" minlength="8" required />
+            </div>
+            <div class="modal-error" id="auth-error"></div>
+            <div class="actions">
+              <button type="button" class="secondary" id="auth-cancel">Cancel</button>
+              <button type="submit" id="auth-submit">${mode === 'login' ? 'Sign in' : 'Create account'}</button>
+            </div>
+          </form>
+          <div class="toggle">
+            ${mode === 'login'
+              ? 'No account? <button type="button" id="auth-toggle">Create one</button>'
+              : 'Have an account? <button type="button" id="auth-toggle">Sign in</button>'}
+          </div>
+        </div>
+      `;
+      document.body.appendChild(wrap);
+      const close = () => wrap.remove();
+      const setErr = (m) => { document.getElementById('auth-error').textContent = m || ''; };
+      wrap.addEventListener('click', (e) => {
+        if (e.target === wrap) close();
+      });
+      document.getElementById('auth-cancel').addEventListener('click', close);
+      document.getElementById('auth-toggle').addEventListener('click', () => {
+        close();
+        openAuthModal(mode === 'login' ? 'register' : 'login');
+      });
+      document.getElementById('auth-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const email = document.getElementById('auth-email').value.trim();
+        const password = document.getElementById('auth-password').value;
+        const submit = document.getElementById('auth-submit');
+        submit.disabled = true;
+        setErr('');
+        try {
+          const res = await fetch(`/api/auth/${mode}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password }),
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            setErr(j.error || `HTTP ${res.status}`);
+            submit.disabled = false;
+            return;
+          }
+          close();
+          await fetchMe();
+          // Re-render current route.
+          dispatch();
+        } catch (err) {
+          setErr(`Network error: ${err.message}`);
+          submit.disabled = false;
+        }
+      });
+    }
+
     function renderDashboard() {
+      const isAuthed = !!currentUser;
+      const formSection = isAuthed
+        ? `
+          <div class="multi-form">
+            <textarea id="multi-input" placeholder="Enter tickers, names, or ideas — comma-separated or one per line (e.g. AAPL, MSFT, Berkshire Hathaway)"></textarea>
+            <div class="file-row">
+              <label>CSV file: <input type="file" id="csv-file" accept=".csv,text/csv" /></label>
+              <span class="file-meta" id="csv-meta"></span>
+            </div>
+            <div class="row-controls">
+              <input type="text" id="new-list-name" placeholder="Optional: save as list named…" />
+              <button type="button" id="evaluate-multi">Evaluate</button>
+            </div>
+          </div>
+        `
+        : `
+          <div class="auth-banner">
+            <strong>Sign in</strong> to evaluate multiple stocks at once, group them into private lists, and export results as CSV.
+            <button class="nav-link signin" style="margin-left: 8px; padding: 2px 10px;" id="banner-signin">Sign in</button>
+          </div>
+          <form class="form" id="form">
+            <input type="text" id="input" placeholder="Enter ticker, name, or idea (e.g. AAPL, Berkshire Hathaway, BTC)" autocomplete="off" required />
+            <button type="submit" id="btn">Evaluate</button>
+          </form>
+        `;
       root.innerHTML = `
+        ${renderHeader()}
         <h1>Investment Quality</h1>
         <p class="tagline">Prepare for the worst, hope for the best.</p>
         <p class="subtitle">Evaluate any stock, crypto, IPO or idea against a business quality checklist.</p>
-        <form class="form" id="form">
-          <input type="text" id="input" placeholder="Enter ticker, name, or idea (e.g. AAPL, Berkshire Hathaway, BTC)" autocomplete="off" required />
-          <button type="submit" id="btn">Evaluate</button>
-        </form>
+        ${formSection}
         <div class="status" id="status"></div>
         <div class="dashboard">
           <div class="column">
@@ -485,7 +919,9 @@
           </div>
         </div>
       `;
-      wireDashboard();
+      wireHeader();
+      if (isAuthed) wireMultiDashboard();
+      else wireDashboard();
       refreshAll();
     }
 
@@ -884,7 +1320,10 @@
     }
 
     function wireDashboard() {
+      const banner = document.getElementById('banner-signin');
+      if (banner) banner.addEventListener('click', () => openAuthModal('login'));
       const form = document.getElementById('form');
+      if (!form) return;
       const input = document.getElementById('input');
       const btn = document.getElementById('btn');
       form.addEventListener('submit', async (e) => {
@@ -921,15 +1360,396 @@
       });
     }
 
+    function parseMultiInput(text) {
+      const seen = new Set();
+      const out = [];
+      for (const raw of text.split(/[\n,]+/)) {
+        const v = (raw || '').trim();
+        if (!v) continue;
+        const key = v.toUpperCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(v);
+      }
+      return out;
+    }
+
+    function wireMultiDashboard() {
+      const textarea = document.getElementById('multi-input');
+      const fileInput = document.getElementById('csv-file');
+      const fileMeta = document.getElementById('csv-meta');
+      const btn = document.getElementById('evaluate-multi');
+      const listNameInput = document.getElementById('new-list-name');
+
+      if (fileInput) {
+        fileInput.addEventListener('change', () => {
+          const f = fileInput.files[0];
+          if (!f) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            const text = String(reader.result || '');
+            textarea.value = text;
+            const rows = parseMultiInput(text);
+            fileMeta.textContent = `Loaded ${rows.length} ticker${rows.length === 1 ? '' : 's'}.`;
+          };
+          reader.readAsText(f);
+        });
+      }
+
+      if (btn) {
+        btn.addEventListener('click', async () => {
+          const text = textarea.value;
+          const inputs = parseMultiInput(text);
+          if (inputs.length === 0) {
+            setStatus('Please enter at least one ticker.', 'error');
+            return;
+          }
+          const listName = (listNameInput.value || '').trim();
+          btn.disabled = true;
+          setStatus(`Submitting ${inputs.length} ticker${inputs.length === 1 ? '' : 's'}...`);
+          try {
+            const endpoint = listName ? '/api/evaluate/upload' : '/api/requests';
+            const body = listName
+              ? { csv: inputs.join('\n'), newListName: listName }
+              : { inputs };
+            const res = await fetch(endpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify(body),
+            });
+            const j = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              setStatus(j.error || `HTTP ${res.status}`, 'error');
+              return;
+            }
+            const results = j.results || [];
+            const done = results.filter((r) => r.status === 'done').length;
+            const pending = results.filter((r) => r.status === 'pending').length;
+            const errors = results.filter((r) => r.status === 'error').length;
+            let summary = `${results.length} submitted: ${pending} queued, ${done} cached`;
+            if (errors > 0) summary += `, ${errors} failed`;
+            if (j.list_id) summary += ` → list #${j.list_id}`;
+            setStatus(summary + '.');
+            textarea.value = '';
+            listNameInput.value = '';
+            fileInput.value = '';
+            fileMeta.textContent = '';
+            await refreshAll();
+          } catch (err) {
+            setStatus(`Network error: ${err.message}`, 'error');
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      }
+    }
+
+    // --- lists page ---
+
+    async function renderLists() {
+      root.innerHTML = `
+        ${renderHeader()}
+        <h1>My Lists</h1>
+        <p class="subtitle">Group stocks into private lists and export them as CSV.</p>
+        <div class="row-controls">
+          <input type="text" id="new-list" placeholder="New list name…" />
+          <button type="button" id="create-list-btn">Create list</button>
+        </div>
+        <div id="lists-body" style="margin-top: 24px;"></div>
+      `;
+      wireHeader();
+      const btn = document.getElementById('create-list-btn');
+      const nameInput = document.getElementById('new-list');
+      btn.addEventListener('click', async () => {
+        const name = (nameInput.value || '').trim();
+        if (!name) return;
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/lists', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            alert(j.error || `HTTP ${res.status}`);
+            return;
+          }
+          nameInput.value = '';
+          await loadLists();
+        } finally {
+          btn.disabled = false;
+        }
+      });
+      await loadLists();
+    }
+
+    async function loadLists() {
+      const el = document.getElementById('lists-body');
+      if (!el) return;
+      el.innerHTML = '<div class="empty">Loading…</div>';
+      try {
+        const res = await fetch('/api/lists');
+        if (!res.ok) {
+          el.innerHTML = `<div class="empty">${escapeHtml(`HTTP ${res.status}`)}</div>`;
+          return;
+        }
+        const j = await res.json();
+        const lists = j.lists || [];
+        if (lists.length === 0) {
+          el.innerHTML = '<div class="empty">No lists yet. Create one above.</div>';
+          return;
+        }
+        el.innerHTML = lists.map((l) => `
+          <div class="card" onclick="location.hash='#/lists/${l.id}'">
+            <div class="card-body">
+              <div class="card-row1">
+                <span class="card-name">${escapeHtml(l.name)}</span>
+                <span class="card-ticker">${l.item_count} item${l.item_count === 1 ? '' : 's'}</span>
+              </div>
+              <div class="card-time">Updated ${escapeHtml(formatRelative(l.updated_at))}</div>
+            </div>
+          </div>
+        `).join('');
+      } catch (err) {
+        el.innerHTML = `<div class="empty">Network error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function renderListDetail(id) {
+      root.innerHTML = `
+        ${renderHeader()}
+        <div style="display:flex; gap: 8px; align-items: center; margin-bottom: 12px;">
+          <button class="secondary" id="back-btn">← My Lists</button>
+        </div>
+        <div id="list-body"><div class="empty">Loading…</div></div>
+      `;
+      wireHeader();
+      document.getElementById('back-btn').addEventListener('click', () => navigate('#/lists'));
+      try {
+        const res = await fetch(`/api/lists/${id}`);
+        if (res.status === 404) {
+          document.getElementById('list-body').innerHTML = '<div class="empty">List not found.</div>';
+          return;
+        }
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          document.getElementById('list-body').innerHTML = `<div class="empty">${escapeHtml(j.error || `HTTP ${res.status}`)}</div>`;
+          return;
+        }
+        const j = await res.json();
+        const list = j.list;
+        const items = list.items || [];
+        const head = `
+          <div class="list-detail-header">
+            <input type="text" id="list-name" value="${escapeHtml(list.name)}" style="font-size: 18px; font-weight: 600;" />
+            <button class="secondary" id="save-name">Rename</button>
+            <button class="danger" id="delete-list">Delete list</button>
+            <a href="/api/lists/${list.id}/export" download><button>Export CSV</button></a>
+          </div>
+        `;
+        const addRow = `
+          <div class="row-controls" style="margin-bottom: 16px;">
+            <input type="text" id="add-ticker" placeholder="Ticker (e.g. AAPL)" />
+            <button id="add-item-btn">Add</button>
+          </div>
+        `;
+        const rows = items.map((it) => {
+          const country = it.country ? `<span class="card-country">${escapeHtml(it.country)}</span>` : '';
+          const kind = it.kind ? `<span class="kind-badge kind-badge-${escapeHtml(it.kind)}">${escapeHtml((it.kind || '').toUpperCase())}</span>` : '';
+          return `
+            <div class="list-table-row">
+              <div class="cell-ticker"><a href="#/stock/${encodeURIComponent(it.ticker)}">${escapeHtml(it.ticker)}</a></div>
+              <div>${escapeHtml(it.name || '')}</div>
+              <div>${kind} ${country}</div>
+              <div>—</div>
+              <div>—</div>
+              <div class="cell-actions">
+                <button class="secondary" data-remove="${escapeHtml(it.ticker)}">Remove</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+        const body = `
+          ${head}
+          ${addRow}
+          ${items.length === 0
+            ? '<div class="empty">No items yet.</div>'
+            : `<div class="list-table">
+                <div class="list-table-row head">
+                  <div>Ticker</div>
+                  <div>Company</div>
+                  <div>Kind</div>
+                  <div>Score</div>
+                  <div>Total</div>
+                  <div></div>
+                </div>
+                ${rows}
+              </div>`}
+        `;
+        document.getElementById('list-body').innerHTML = body;
+        // Wire actions
+        document.getElementById('save-name').addEventListener('click', async () => {
+          const name = document.getElementById('list-name').value.trim();
+          if (!name) return;
+          const r = await fetch(`/api/lists/${list.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+          });
+          if (!r.ok) {
+            const j = await r.json().catch(() => ({}));
+            alert(j.error || `HTTP ${r.status}`);
+          }
+        });
+        document.getElementById('delete-list').addEventListener('click', async () => {
+          if (!confirm(`Delete list "${list.name}"?`)) return;
+          const r = await fetch(`/api/lists/${list.id}`, { method: 'DELETE' });
+          if (!r.ok) {
+            const j = await r.json().catch(() => ({}));
+            alert(j.error || `HTTP ${r.status}`);
+            return;
+          }
+          navigate('#/lists');
+        });
+        document.getElementById('add-item-btn').addEventListener('click', async () => {
+          const ticker = document.getElementById('add-ticker').value.trim().toUpperCase();
+          if (!ticker) return;
+          const r = await fetch(`/api/lists/${list.id}/items`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tickers: [ticker] }),
+          });
+          if (!r.ok) {
+            const j = await r.json().catch(() => ({}));
+            alert(j.error || `HTTP ${r.status}`);
+            return;
+          }
+          renderListDetail(list.id);
+        });
+        document.querySelectorAll('button[data-remove]').forEach((btn) => {
+          btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const ticker = btn.getAttribute('data-remove');
+            await fetch(`/api/lists/${list.id}/items/${encodeURIComponent(ticker)}`, { method: 'DELETE' });
+            renderListDetail(list.id);
+          });
+        });
+      } catch (err) {
+        document.getElementById('list-body').innerHTML = `<div class="empty">Network error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    // --- admin page ---
+
+    async function renderAdmin() {
+      root.innerHTML = `
+        ${renderHeader()}
+        <h1>Admin</h1>
+        <p class="subtitle">User management and destructive operations. All actions are logged.</p>
+        <div id="admin-body"><div class="empty">Loading…</div></div>
+      `;
+      wireHeader();
+      try {
+        const res = await fetch('/api/admin/users');
+        if (res.status === 403) {
+          document.getElementById('admin-body').innerHTML = '<div class="empty">Admin access required.</div>';
+          return;
+        }
+        if (!res.ok) {
+          document.getElementById('admin-body').innerHTML = `<div class="empty">HTTP ${res.status}</div>`;
+          return;
+        }
+        const j = await res.json();
+        const users = j.users || [];
+        const rows = users.map((u) => `
+          <div class="admin-row">
+            <div>${escapeHtml(u.email)}</div>
+            <div><span class="role-badge ${u.role === 'admin' ? 'admin' : 'user'}">${escapeHtml(u.role)}</span></div>
+            <div>${escapeHtml(formatRelative(u.created_at))}</div>
+            <div class="cell-actions">
+              <button class="secondary" data-promote="${u.id}" data-target-role="${u.role === 'admin' ? 'user' : 'admin'}">
+                ${u.role === 'admin' ? 'Demote' : 'Promote'}
+              </button>
+              <button class="danger" data-delete-user="${u.id}">Delete</button>
+            </div>
+          </div>
+        `).join('');
+        document.getElementById('admin-body').innerHTML = `
+          <div class="admin-section">
+            <h2>Users</h2>
+            <div class="admin-table">
+              <div class="admin-row head">
+                <div>Email</div>
+                <div>Role</div>
+                <div>Created</div>
+                <div></div>
+              </div>
+              ${rows}
+            </div>
+          </div>
+        `;
+        document.querySelectorAll('button[data-promote]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const id = btn.getAttribute('data-promote');
+            const role = btn.getAttribute('data-target-role');
+            const r = await fetch(`/api/admin/users/${id}/role`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ role }),
+            });
+            if (!r.ok) {
+              const j = await r.json().catch(() => ({}));
+              alert(j.error || `HTTP ${r.status}`);
+              return;
+            }
+            renderAdmin();
+          });
+        });
+        document.querySelectorAll('button[data-delete-user]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const id = btn.getAttribute('data-delete-user');
+            if (!confirm('Delete this user and all their lists?')) return;
+            const r = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+            if (!r.ok) {
+              const j = await r.json().catch(() => ({}));
+              alert(j.error || `HTTP ${r.status}`);
+              return;
+            }
+            renderAdmin();
+          });
+        });
+      } catch (err) {
+        document.getElementById('admin-body').innerHTML = `<div class="empty">Network error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
     // --- router dispatch ---
 
-    function dispatch() {
+    async function dispatch() {
+      // Always re-fetch the current user on route change so login/logout from
+      // the dropdown updates the header on the next render.
+      await fetchMe();
       const route = getRoute();
-      if (route.name === 'detail') {
-        renderDetail(route.ticker);
-      } else {
-        renderDashboard();
+      if (route.name === 'detail') return renderDetail(route.ticker);
+      if (route.name === 'lists') {
+        if (!currentUser) return renderDashboard();
+        return renderLists();
       }
+      if (route.name === 'listDetail') {
+        if (!currentUser) return renderDashboard();
+        return renderListDetail(route.id);
+      }
+      if (route.name === 'admin') {
+        if (!currentUser || currentUser.role !== 'admin') {
+          root.innerHTML = `${renderHeader()}<h1>Admin</h1><div class="empty">Admin access required.</div>`;
+          wireHeader();
+          return;
+        }
+        return renderAdmin();
+      }
+      return renderDashboard();
     }
 
     window.addEventListener('hashchange', dispatch);

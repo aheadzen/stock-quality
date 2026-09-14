@@ -42,67 +42,66 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Enqueue a new request for `input`. If we can resolve a cached company AND
-// every current question has a fresh factor for it, the request is inserted
-// as already done. Otherwise it's pending and the processor will pick it up.
-export async function enqueueRequest(input) {
+// Enqueue a new request for `input`. Pure-DB only — no LLM call — so the
+// caller sees the new card immediately and the background processor handles
+// company lookup + evaluation. The only fast-path that returns synchronously
+// as 'done' is a full cache hit (cached company + every current question has
+// a fresh factor), which is also pure DB.
+export async function enqueueRequest(input, { userId = null } = {}) {
   initDb();
   const trimmed = (input || '').trim();
   if (!trimmed) throw new Error('input is required');
 
-  const client = getClient();
+  const s = getStatements();
+  const now = Date.now();
 
-  // Best-effort quick lookup. If it fails (no cache hit, or LLM error),
-  // fall through to pending and let the processor handle it.
-  let company = await lookupCachedCompany(trimmed);
-  if (!company) {
-    try {
-      company = await lookupCompany(client, trimmed);
-    } catch (err) {
-      // Couldn't resolve — still record the request as pending. The
-      // processor will retry the lookup when it picks the row up.
-      company = null;
+  // DB-only lookup. Returns null when the input isn't ticker-shaped, when no
+  // cached row exists, or when the cached row's metadata is older than 7 days.
+  // Stale metadata will be refreshed by the background processor.
+  const company = await lookupCachedCompany(trimmed);
+  const ticker = company?.ticker || null;
+
+  // Fast-path: full cache hit. Same-ticker → instant 'done' so the UI doesn't
+  // even flicker through 'pending'.
+  if (ticker) {
+    const kind = company.kind || 'listed';
+    const questions = loadQuestions(kind);
+    const cached = findFreshEvaluationForQuestions(ticker, questions);
+    if (cached) {
+      if (company) saveCompany(company);
+      const id = recordCompletedRequest(trimmed, ticker, cached.score, cached.total, { userId });
+      return {
+        id,
+        status: 'done',
+        ticker,
+        score: cached.score,
+        total: cached.total,
+      };
     }
   }
 
-  // Pick questions based on entity kind (crypto vs company). Default to
-  // company if kind is unknown — the processor will retry with the right
-  // kind once it resolves the company.
-  const kind = company?.kind || 'listed';
-  const questions = loadQuestions(kind);
+  // Hint a ticker when the input is shaped like one — the UI can render the
+  // ticker immediately even before the LLM resolves company metadata.
+  const hintTicker = ticker || (TICKER_SHAPE.test(trimmed.toUpperCase()) ? trimmed.toUpperCase() : null);
 
-  const ticker = company?.ticker || null;
-  const cached = ticker ? findFreshEvaluationForQuestions(ticker, questions) : null;
-
-  if (cached) {
-    // Even on a full cache hit, persist the company metadata — `lookupCompany`
-    // ran above and may have refreshed a stale or missing `companies` row.
-    // Without this, an orphan ticker (factors cached, no company row) stays
-    // orphaned forever and the UI falls back to the raw user input as the name.
-    if (company) saveCompany(company);
-    const id = recordCompletedRequest(trimmed, ticker, cached.score, cached.total);
-    return {
-      id,
-      status: 'done',
-      ticker,
-      score: cached.score,
-      total: cached.total,
-    };
-  }
-
-  const now = Date.now();
-  const id = getStatements().insertRequest.run({
+  const id = s.insertRequest.run({
     input: trimmed,
-    ticker,
+    ticker: hintTicker,
     status: 'pending',
     score: null,
     total: null,
     created_at: now,
     updated_at: now,
+    user_id: userId,
   }).lastInsertRowid;
 
-  return { id: Number(id), status: 'pending', ticker };
+  return { id: Number(id), status: 'pending', ticker: hintTicker };
 }
+
+// Mirror of TICKER_SHAPE in src/company.js. We duplicate the regex rather than
+// importing the function so this module has no compile-time dependency on the
+// LLM-backed lookupCompany. Keep in sync if the shape ever changes.
+const TICKER_SHAPE = /^[A-Z][A-Z0-9.\-]{0,5}$/;
 
 async function processRequest(req, client, settings) {
   const s = getStatements();
@@ -380,7 +379,7 @@ export function getBest(limit = 5, kindCounts) {
 // Persist a 'done' row for an evaluation that completed outside the queue
 // (e.g. from the CLI). The row is what surfaces in the web UI's recent list
 // and in the best-of list.
-export function recordCompletedRequest(input, ticker, score, total) {
+export function recordCompletedRequest(input, ticker, score, total, { userId = null } = {}) {
   initDb();
   const s = getStatements();
   const now = Date.now();
@@ -392,6 +391,7 @@ export function recordCompletedRequest(input, ticker, score, total) {
     total: typeof total === 'number' ? total : null,
     created_at: now,
     updated_at: now,
+    user_id: userId,
   }).lastInsertRowid;
   return Number(id);
 }

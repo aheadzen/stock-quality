@@ -16,8 +16,10 @@
   "description": "CLI that uses the MiniMax API to evaluate stocks on a quality checklist",
   "type": "module",
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "better-sqlite3": "^11.10.0",
     "chalk": "^6.0.0",
+    "cookie": "^2.0.1",
     "dotenv": "^17.4.2",
     "openai": "^7.15.0",
     "p-limit": "^7.3.2"

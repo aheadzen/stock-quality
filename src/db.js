@@ -70,7 +70,43 @@ CREATE TABLE IF NOT EXISTS requests (
   error_message TEXT,
   created_at INTEGER,
   updated_at INTEGER,
-  completed_at INTEGER
+  completed_at INTEGER,
+  user_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user','admin')),
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_sessions_user_id ON sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS lists (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE (user_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS list_items (
+  list_id INTEGER NOT NULL,
+  ticker TEXT NOT NULL,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (list_id, ticker),
+  FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE
 );
 `;
 
@@ -130,6 +166,14 @@ function migrate(d) {
     CREATE INDEX IF NOT EXISTS ix_evaluation_factors_ticker_idx
       ON evaluation_factors(ticker, idx);
   `);
+
+  // requests.user_id (nullable; legacy rows keep NULL → admin sees them in
+  // /api/requests but per-user filter excludes them).
+  const reqCols = new Set(d.prepare(`PRAGMA table_info(requests)`).all().map((c) => c.name));
+  if (!reqCols.has('user_id')) {
+    d.exec(`ALTER TABLE requests ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+  }
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_requests_user_id ON requests(user_id)`);
 }
 
 function sha256(s) {
@@ -185,8 +229,8 @@ function prepare(d) {
     deleteFactorsForTicker: d.prepare(`DELETE FROM evaluation_factors WHERE ticker = ?`),
 
     insertRequest: d.prepare(`
-      INSERT INTO requests (input, ticker, status, score, total, created_at, updated_at)
-      VALUES (@input, @ticker, @status, @score, @total, @created_at, @updated_at)
+      INSERT INTO requests (input, ticker, status, score, total, created_at, updated_at, user_id)
+      VALUES (@input, @ticker, @status, @score, @total, @created_at, @updated_at, @user_id)
     `),
     getRequest: d.prepare(`SELECT * FROM requests WHERE id = ?`),
     listOngoing: d.prepare(`
@@ -273,6 +317,92 @@ function prepare(d) {
           END
         )
       ORDER BY r.score DESC, r.completed_at DESC
+      LIMIT ?
+    `),
+
+    // ---- users ----
+    insertUser: d.prepare(`
+      INSERT INTO users (email, password_hash, role, created_at)
+      VALUES (?, ?, ?, ?)
+    `),
+    findUserByEmail: d.prepare(`SELECT * FROM users WHERE email = ?`),
+    findUserById: d.prepare(`SELECT * FROM users WHERE id = ?`),
+    listUsers: d.prepare(`
+      SELECT id, email, role, created_at FROM users ORDER BY created_at ASC LIMIT ?
+    `),
+    updateUserPassword: d.prepare(`
+      UPDATE users SET password_hash = ? WHERE id = ?
+    `),
+    setUserRole: d.prepare(`
+      UPDATE users SET role = ? WHERE id = ?
+    `),
+    deleteUser: d.prepare(`DELETE FROM users WHERE id = ?`),
+
+    // ---- sessions ----
+    insertSession: d.prepare(`
+      INSERT INTO sessions (id, user_id, expires_at, created_at)
+      VALUES (?, ?, ?, ?)
+    `),
+    findSession: d.prepare(`
+      SELECT s.id AS sid, s.user_id, s.expires_at, s.created_at,
+             u.email, u.role
+      FROM sessions s
+      LEFT JOIN users u ON u.id = s.user_id
+      WHERE s.id = ? AND s.expires_at > ?
+    `),
+    deleteSession: d.prepare(`DELETE FROM sessions WHERE id = ?`),
+    deleteSessionsForUser: d.prepare(`DELETE FROM sessions WHERE user_id = ?`),
+    purgeExpiredSessions: d.prepare(`DELETE FROM sessions WHERE expires_at <= ?`),
+
+    // ---- lists ----
+    insertList: d.prepare(`
+      INSERT INTO lists (user_id, name, created_at, updated_at)
+      VALUES (?, ?, ?, ?)
+    `),
+    findListById: d.prepare(`
+      SELECT id, user_id, name, created_at, updated_at
+      FROM lists WHERE id = ?
+    `),
+    findListByUserAndName: d.prepare(`
+      SELECT id, user_id, name, created_at, updated_at
+      FROM lists WHERE user_id = ? AND name = ?
+    `),
+    findListsByUser: d.prepare(`
+      SELECT l.id, l.user_id, l.name, l.created_at, l.updated_at,
+             (SELECT COUNT(*) FROM list_items WHERE list_id = l.id) AS item_count
+      FROM lists l
+      WHERE l.user_id = ?
+      ORDER BY l.updated_at DESC
+    `),
+    updateListName: d.prepare(`
+      UPDATE lists SET name = ?, updated_at = ? WHERE id = ?
+    `),
+    touchList: d.prepare(`
+      UPDATE lists SET updated_at = ? WHERE id = ?
+    `),
+    deleteList: d.prepare(`DELETE FROM lists WHERE id = ?`),
+
+    insertListItem: d.prepare(`
+      INSERT OR IGNORE INTO list_items (list_id, ticker, added_at)
+      VALUES (?, ?, ?)
+    `),
+    deleteListItem: d.prepare(`
+      DELETE FROM list_items WHERE list_id = ? AND ticker = ?
+    `),
+    findListItems: d.prepare(`
+      SELECT li.list_id, li.ticker, li.added_at,
+             c.name, c.kind, c.profile, c.country
+      FROM list_items li
+      LEFT JOIN companies c ON c.ticker = li.ticker
+      WHERE li.list_id = ?
+      ORDER BY li.added_at DESC
+    `),
+    listAllLists: d.prepare(`
+      SELECT l.id, l.user_id, l.name, l.created_at, l.updated_at,
+             u.email AS user_email
+      FROM lists l
+      LEFT JOIN users u ON u.id = l.user_id
+      ORDER BY l.updated_at DESC
       LIMIT ?
     `),
   };
