@@ -46,6 +46,7 @@ import {
   removeItem,
   exportListCsv,
   listAllLists,
+  backfillListItemsToTickers,
 } from './lists.js';
 import {
   findUserById,
@@ -951,6 +952,16 @@ try {
 } catch (err) {
   logError('boot', 'db init failed', err);
   process.exit(1);
+}
+try {
+  // One-time backfill: convert name-stored list_items rows to their resolved
+  // ticker so PRIMARY KEY (list_id, ticker) enforces uniqueness going forward.
+  const changed = backfillListItemsToTickers();
+  if (changed > 0) {
+    logInfo('boot', `backfilled ${changed} list_items rows from raw input to ticker`);
+  }
+} catch (err) {
+  logWarn('boot', `list_items backfill failed (non-fatal): ${err.message || err}`);
 }
 try {
   // Validate both question sets at boot so a malformed file fails fast.

@@ -7,6 +7,75 @@
 
 import { getDb, getStatements, initDb } from './db.js';
 
+const STOPWORDS = new Set(['LTD', 'LIMITED', 'INC', 'INCORPORATED', 'CORP', 'CORPORATION',
+  'COMPANY', 'CO', 'PLC', 'AG', 'SA', 'NV', 'THE', 'AND']);
+
+// Longest non-stopword ≥3 chars in the input — usually the most distinctive
+// token (e.g. "LAXMI" from "LAXMI DENTAL LTD.").
+function firstSignificantWord(input) {
+  if (!input) return null;
+  const cleaned = String(input).toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ');
+  const words = cleaned.split(/\s+/).filter((w) => w && !STOPWORDS.has(w) && w.length >= 3);
+  if (words.length === 0) return null;
+  return words.sort((a, b) => b.length - a.length)[0];
+}
+
+// Shared 3-tier resolution used by addItems, getListItems, and the backfill:
+// (1) ticker-shape + direct hit, (2) exact name match, (3) LIKE on first
+// significant word. Returns null when nothing matches.
+export function resolveToTicker(raw) {
+  if (!raw) return null;
+  const upper = String(raw).trim().toUpperCase();
+  if (!upper) return null;
+  initDb();
+  const s = getStatements();
+  const db = getDb();
+  if (/^[A-Z][A-Z0-9.\-]{0,5}$/.test(upper)) {
+    const hit = s.findCompany.get(upper);
+    if (hit) return hit.ticker;
+  }
+  const byName = s.findCompanyByName.get(upper);
+  if (byName) return byName.ticker;
+  const word = firstSignificantWord(upper);
+  if (word) {
+    const fuzzy = db.prepare(
+      `SELECT ticker FROM companies WHERE UPPER(name) LIKE ? LIMIT 1`
+    ).get(`%${word}%`);
+    if (fuzzy) return fuzzy.ticker;
+  }
+  return null;
+}
+
+// One-time backfill: replace name-stored list_items rows with their resolved
+// ticker so the PRIMARY KEY (list_id, ticker) enforces uniqueness going
+// forward. Idempotent — re-running on already-resolved rows is a no-op.
+// Called from initDb() in db.js via the migrations hook below.
+export function backfillListItemsToTickers() {
+  initDb();
+  const db = getDb();
+  const rows = db.prepare(`SELECT list_id, ticker FROM list_items`).all();
+  let changed = 0;
+  for (const row of rows) {
+    const resolved = resolveToTicker(row.ticker);
+    if (!resolved || resolved === row.ticker) continue;
+    const added = db.prepare(
+      `SELECT added_at FROM list_items WHERE list_id = ? AND ticker = ?`
+    ).get(row.list_id, row.ticker);
+    if (!added) continue;
+    // Replace the row in place. SQLite's INSERT OR IGNORE on PRIMARY KEY
+    // conflict + DELETE first gives us atomic dedupe.
+    const replace = db.transaction(() => {
+      db.prepare(`DELETE FROM list_items WHERE list_id = ? AND ticker = ?`)
+        .run(row.list_id, row.ticker);
+      db.prepare(`INSERT OR IGNORE INTO list_items (list_id, ticker, added_at) VALUES (?, ?, ?)`)
+        .run(row.list_id, resolved, added.added_at);
+    });
+    replace();
+    changed += 1;
+  }
+  return changed;
+}
+
 // ---- CRUD ----
 
 export function createList(userId, name) {
@@ -84,18 +153,6 @@ export function getListItems(listId) {
   return rows;
 }
 
-const STOPWORDS = new Set(['LTD', 'LIMITED', 'INC', 'INCORPORATED', 'CORP', 'CORPORATION',
-  'COMPANY', 'CO', 'PLC', 'AG', 'SA', 'NV', 'THE', 'AND']);
-
-function firstSignificantWord(input) {
-  if (!input) return null;
-  const cleaned = String(input).toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ');
-  const words = cleaned.split(/\s+/).filter((w) => w && !STOPWORDS.has(w) && w.length >= 3);
-  if (words.length === 0) return null;
-  // Longest word is usually the most distinctive.
-  return words.sort((a, b) => b.length - a.length)[0];
-}
-
 export function updateListName(id, userId, name) {
   const trimmed = (name || '').toString().trim();
   if (!trimmed) throw new Error('List name is required');
@@ -130,38 +187,34 @@ export function addItems(listId, userId, tickers) {
   const s = getStatements();
   const row = s.findListById.get(listId);
   if (!row || row.user_id !== userId) throw new Error('List not found');
-  const now = Date.now();
-  let inserted = 0;
   const db = getDb();
+  const now = Date.now();
+  // Resolve + dedupe inputs first, then delete any existing rows in this list
+  // that resolve to one of the new tickers (catches name-stored duplicates).
+  const resolvedSet = new Set();
+  for (const raw of tickers) {
+    const rawText = (raw || '').toString().trim();
+    if (!rawText) continue;
+    const upper = rawText.toUpperCase();
+    const ticker = resolveToTicker(upper) || upper;
+    resolvedSet.add(ticker);
+  }
+  let inserted = 0;
   const txn = db.transaction(() => {
-    for (const raw of tickers) {
-      const rawText = (raw || '').toString().trim();
-      if (!rawText) continue;
-      const upper = rawText.toUpperCase();
-      let ticker = null;
-      // 1. Ticker-shaped input: try direct hit on companies.ticker
-      if (/^[A-Z][A-Z0-9.\-]{0,5}$/.test(upper)) {
-        const hit = s.findCompany.get(upper);
-        if (hit) ticker = hit.ticker;
-      }
-      // 2. Exact name match (case-insensitive) against cached companies
-      if (!ticker) {
-        const hit = s.findCompanyByName.get(upper);
-        if (hit) ticker = hit.ticker;
-      }
-      // 3. Fuzzy: first significant word matches LIKE in companies.name
-      if (!ticker) {
-        const word = firstSignificantWord(upper);
-        if (word) {
-          const hit = db.prepare(
-            `SELECT ticker FROM companies WHERE UPPER(name) LIKE ? LIMIT 1`
-          ).get(`%${word}%`);
-          if (hit) ticker = hit.ticker;
+    // Drop name-stored rows whose resolved ticker is in our incoming set.
+    for (const ticker of resolvedSet) {
+      const conflicts = db.prepare(
+        `SELECT ticker FROM list_items WHERE list_id = ?`
+      ).all(listId);
+      for (const c of conflicts) {
+        if (c.ticker === ticker) continue;
+        if (resolveToTicker(c.ticker) === ticker) {
+          db.prepare(`DELETE FROM list_items WHERE list_id = ? AND ticker = ?`)
+            .run(listId, c.ticker);
         }
       }
-      // 4. Last resort: store raw verbatim; read-time fallback will re-try.
-      if (!ticker) ticker = upper;
-      // INSERT OR IGNORE so re-adding an existing ticker is a no-op.
+    }
+    for (const ticker of resolvedSet) {
       const r = s.insertListItem.run(listId, ticker, now);
       if (r.changes > 0) inserted += 1;
     }
