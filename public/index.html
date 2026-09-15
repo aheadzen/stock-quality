@@ -573,6 +573,21 @@
     .list-table-row:last-child { border-bottom: none; }
     .list-table-row .cell-actions { display: flex; gap: 6px; justify-content: flex-end; }
     .list-table-row .cell-ticker { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+    .list-table-row .cell-ticker a, .list-table-row .cell-score a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .list-table-row .cell-ticker a:hover, .list-table-row .cell-score a:hover {
+      text-decoration: underline;
+    }
+    .list-table-row .cell-score { font-weight: 600; }
+    .list-table-row .cell-total { color: var(--muted); }
+    .list-table-row .cell-subtitle {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+      font-style: italic;
+    }
     @media (max-width: 720px) {
       .list-table-row { grid-template-columns: 1fr 1fr; }
       .list-table-row .cell-country, .list-table-row .cell-kind, .list-table-row .cell-score { grid-column: span 1; }
@@ -1558,15 +1573,29 @@
         const rows = items.map((it) => {
           const country = it.country ? `<span class="card-country">${escapeHtml(it.country)}</span>` : '';
           const kind = it.kind ? `<span class="kind-badge kind-badge-${escapeHtml(it.kind)}">${escapeHtml((it.kind || '').toUpperCase())}</span>` : '';
+          const stockHref = `#/stock/${encodeURIComponent(it.ticker)}`;
+          // Score: render as a clickable link to the detail page if we have one.
+          const scoreText = (typeof it.score === 'number')
+            ? `<a href="${stockHref}">${it.score}</a>`
+            : '<span style="color: var(--muted);">—</span>';
+          const totalText = (typeof it.total === 'number') ? String(it.total) : '';
+          // If the user's original input doesn't match the resolved ticker,
+          // show the original as a small subtitle so they can spot mismatches.
+          const subtitle = (it.raw_ticker && it.raw_ticker !== it.ticker)
+            ? `<div class="cell-subtitle">from "${escapeHtml(it.raw_ticker)}"</div>`
+            : '';
           return `
             <div class="list-table-row">
-              <div class="cell-ticker"><a href="#/stock/${encodeURIComponent(it.ticker)}">${escapeHtml(it.ticker)}</a></div>
+              <div class="cell-ticker">
+                <a href="${stockHref}">${escapeHtml(it.ticker)}</a>
+                ${subtitle}
+              </div>
               <div>${escapeHtml(it.name || '')}</div>
               <div>${kind} ${country}</div>
-              <div>—</div>
-              <div>—</div>
+              <div class="cell-score">${scoreText}</div>
+              <div class="cell-total">${escapeHtml(totalText)}</div>
               <div class="cell-actions">
-                <button class="secondary" data-remove="${escapeHtml(it.ticker)}">Remove</button>
+                <button class="secondary" data-remove="${escapeHtml(it.raw_ticker || it.ticker)}">Remove</button>
               </div>
             </div>
           `;

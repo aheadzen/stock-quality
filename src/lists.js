@@ -47,7 +47,53 @@ export function getListById(id, userId) {
 export function getListItems(listId) {
   initDb();
   const s = getStatements();
-  return s.findListItems.all(listId);
+  const rows = s.findListItems.all(listId);
+  // Fuzzy fallback: items where exact ticker + exact name match didn't
+  // resolve still might match a company whose name contains a key word from
+  // the stored input. Strip legal suffixes and try LIKE.
+  const needsResolve = rows.filter((r) => !r.resolved_ticker);
+  if (needsResolve.length === 0) return rows;
+  const db = getDb();
+  for (const row of needsResolve) {
+    const word = firstSignificantWord(row.ticker);
+    if (!word) continue;
+    const hit = db.prepare(
+      `SELECT ticker, name, kind, profile, country FROM companies
+       WHERE UPPER(name) LIKE ? LIMIT 1`
+    ).get(`%${word}%`);
+    if (hit) {
+      row.resolved_ticker = hit.ticker;
+      row.name = row.name ?? hit.name;
+      row.kind = row.kind ?? hit.kind;
+      row.profile = row.profile ?? hit.profile;
+      row.country = row.country ?? hit.country;
+      // Also backfill score/total from the now-known ticker.
+      const scoreRow = db.prepare(`
+        SELECT score, total, completed_at AS evaluated_at
+        FROM requests
+        WHERE ticker = ? AND status = 'done' AND score IS NOT NULL
+        ORDER BY completed_at DESC LIMIT 1
+      `).get(hit.ticker);
+      if (scoreRow) {
+        row.score = scoreRow.score;
+        row.total = scoreRow.total;
+        row.evaluated_at = scoreRow.evaluated_at;
+      }
+    }
+  }
+  return rows;
+}
+
+const STOPWORDS = new Set(['LTD', 'LIMITED', 'INC', 'INCORPORATED', 'CORP', 'CORPORATION',
+  'COMPANY', 'CO', 'PLC', 'AG', 'SA', 'NV', 'THE', 'AND']);
+
+function firstSignificantWord(input) {
+  if (!input) return null;
+  const cleaned = String(input).toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ');
+  const words = cleaned.split(/\s+/).filter((w) => w && !STOPWORDS.has(w) && w.length >= 3);
+  if (words.length === 0) return null;
+  // Longest word is usually the most distinctive.
+  return words.sort((a, b) => b.length - a.length)[0];
 }
 
 export function updateListName(id, userId, name) {
@@ -86,10 +132,35 @@ export function addItems(listId, userId, tickers) {
   if (!row || row.user_id !== userId) throw new Error('List not found');
   const now = Date.now();
   let inserted = 0;
-  const txn = getDb().transaction(() => {
+  const db = getDb();
+  const txn = db.transaction(() => {
     for (const raw of tickers) {
-      const ticker = (raw || '').toString().trim().toUpperCase();
-      if (!ticker) continue;
+      const rawText = (raw || '').toString().trim();
+      if (!rawText) continue;
+      const upper = rawText.toUpperCase();
+      let ticker = null;
+      // 1. Ticker-shaped input: try direct hit on companies.ticker
+      if (/^[A-Z][A-Z0-9.\-]{0,5}$/.test(upper)) {
+        const hit = s.findCompany.get(upper);
+        if (hit) ticker = hit.ticker;
+      }
+      // 2. Exact name match (case-insensitive) against cached companies
+      if (!ticker) {
+        const hit = s.findCompanyByName.get(upper);
+        if (hit) ticker = hit.ticker;
+      }
+      // 3. Fuzzy: first significant word matches LIKE in companies.name
+      if (!ticker) {
+        const word = firstSignificantWord(upper);
+        if (word) {
+          const hit = db.prepare(
+            `SELECT ticker FROM companies WHERE UPPER(name) LIKE ? LIMIT 1`
+          ).get(`%${word}%`);
+          if (hit) ticker = hit.ticker;
+        }
+      }
+      // 4. Last resort: store raw verbatim; read-time fallback will re-try.
+      if (!ticker) ticker = upper;
       // INSERT OR IGNORE so re-adding an existing ticker is a no-op.
       const r = s.insertListItem.run(listId, ticker, now);
       if (r.changes > 0) inserted += 1;

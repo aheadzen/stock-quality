@@ -501,12 +501,16 @@ function handleGetList(req, res, id) {
   const list = getListById(id, user.id);
   if (!list) return sendJson(res, 404, { error: 'List not found' });
   const items = getListItems(id).map((it) => ({
-    ticker: it.ticker,
+    ticker: it.resolved_ticker ?? it.ticker,
+    raw_ticker: it.ticker,
     added_at: it.added_at,
     name: it.name ?? null,
     kind: it.kind ?? null,
     profile: it.profile ?? null,
     country: it.country ?? null,
+    score: it.score ?? null,
+    total: it.total ?? null,
+    evaluated_at: it.evaluated_at ?? null,
   }));
   return sendJson(res, 200, { list: { ...list, items } });
 }

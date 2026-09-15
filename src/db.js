@@ -209,6 +209,7 @@ function prepare(d) {
         fetched_at=excluded.fetched_at
     `),
     findCompany: d.prepare(`SELECT * FROM companies WHERE ticker = ?`),
+    findCompanyByName: d.prepare(`SELECT * FROM companies WHERE UPPER(name) = ? LIMIT 1`),
 
     // Per-factor UPSERT. evaluation_id is left NULL — the table is now self-
     // keyed on (ticker, question_hash) and the column is kept only to avoid a
@@ -391,9 +392,34 @@ function prepare(d) {
     `),
     findListItems: d.prepare(`
       SELECT li.list_id, li.ticker, li.added_at,
-             c.name, c.kind, c.profile, c.country
+             CASE WHEN c.ticker IS NOT NULL THEN c.ticker
+                  WHEN c2.ticker IS NOT NULL THEN c2.ticker
+                  ELSE NULL END AS resolved_ticker,
+             COALESCE(c2.name, c.name) AS name,
+             COALESCE(c2.kind, c.kind) AS kind,
+             COALESCE(c2.profile, c.profile) AS profile,
+             COALESCE(c2.country, c.country) AS country,
+             (SELECT r.score
+              FROM requests r
+              WHERE r.ticker = COALESCE(c.ticker, c2.ticker, li.ticker)
+                AND r.status = 'done' AND r.score IS NOT NULL
+              ORDER BY r.completed_at DESC
+              LIMIT 1) AS score,
+             (SELECT r.total
+              FROM requests r
+              WHERE r.ticker = COALESCE(c.ticker, c2.ticker, li.ticker)
+                AND r.status = 'done' AND r.score IS NOT NULL
+              ORDER BY r.completed_at DESC
+              LIMIT 1) AS total,
+             (SELECT r.completed_at
+              FROM requests r
+              WHERE r.ticker = COALESCE(c.ticker, c2.ticker, li.ticker)
+                AND r.status = 'done' AND r.score IS NOT NULL
+              ORDER BY r.completed_at DESC
+              LIMIT 1) AS evaluated_at
       FROM list_items li
       LEFT JOIN companies c ON c.ticker = li.ticker
+      LEFT JOIN companies c2 ON UPPER(c2.name) = UPPER(li.ticker)
       WHERE li.list_id = ?
       ORDER BY li.added_at DESC
     `),

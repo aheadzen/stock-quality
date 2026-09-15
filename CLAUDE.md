@@ -13,6 +13,15 @@ node src/index.js AAPL
 node src/index.js "Berkshire Hathaway"
 node src/index.js AAPL --verbose   # full per-question table
 
+# CLI (multi-stock — requires auth + reachable web server)
+STOCK_QUALITY_EMAIL=admin@example.com STOCK_QUALITY_PASSWORD=adminpass1 \
+  node src/index.js AAPL,MSFT,GOOG
+STOCK_QUALITY_EMAIL=admin@example.com STOCK_QUALITY_PASSWORD=adminpass1 \
+  node src/index.js --file tickers.txt    # one per line
+
+# Bootstrap admin (idempotent — re-run to reset password + role)
+node src/seed-admin.js admin@example.com adminpass1
+
 # Web UI (local dev — defaults to port 3000)
 npm run web
 PORT=8080 node src/server.js
@@ -29,17 +38,39 @@ No build step, no transpilation. ES modules (`"type": "module"` in `package.json
 
 ## Architecture
 
-Four layers; each only depends on the layer below it.
+Five layers; each only depends on the layer below it.
 
 ```
 entry points ────────────────────────────────────────────────
-  src/index.js     CLI: lookup → per-question cache partition → LLM only on missing → save
-  src/server.js    HTTP API + queue bootstrap; static-serves public/index.html
+  src/index.js     CLI: single-stock inline OR multi-stock via HTTP /api/requests
+                   (logs in with STOCK_QUALITY_EMAIL/PASSWORD env vars). Falls back
+                   to inline only when no env vars set or server unreachable.
+  src/server.js    HTTP API + queue bootstrap; static-serves public/index.html.
+                   Cookie-based auth on every request via attachUser(req).
 
 orchestration ────────────────────────────────────────────────
-  src/queue.js     Background processor. enqueueRequest, startProcessor, getOngoing,
-                   getBest. Tick loop runs pending rows with p-limit and a per-row
-                   in-memory 429 backoff (`pausedUntil`, resets on process restart).
+  src/queue.js     Background processor. enqueueRequest is pure-DB (hot path):
+                   full cache hit → 'done' synchronously, else insert pending and
+                   return immediately. Background tick loop runs pending rows
+                   with p-limit and a per-row in-memory 429 backoff (`pausedUntil`,
+                   resets on process restart).
+  src/auth.js      bcryptjs (12 rounds) + opaque 32-byte hex session tokens in
+                   SQLite. Cookie `sid` HttpOnly + SameSite=Strict + Secure in prod.
+                   requireAuth / requireAdmin middleware. In-memory login rate
+                   limit (5/IP/15min) and batch rate limit (200/user/hour).
+
+users + lists ─────────────────────────────────────────────────
+  src/users.js     createUser (bcrypt hash + 8-char min), findUserByEmail/Id,
+                   setUserRole, deleteUser (cascades sessions + lists via FK,
+                   requests.user_id → NULL via ON DELETE SET NULL).
+                   constantTimeVerifyPassword against dummy hash for email
+                   enumeration resistance.
+  src/lists.js     Per-user private lists. UNIQUE(user_id, name). Items are
+                   tickers joined to companies + latest completed request score.
+                   exportListCsv prefixes cells starting with =, +, -, @, \t, \r
+                   with `'` to block Excel formula injection.
+  src/seed-admin.js  CLI: `node src/seed-admin.js <email> <password>` — creates
+                   an admin user or resets an existing one (idempotent).
 
 core eval ────────────────────────────────────────────────────
   src/company.js   lookupCompany (LLM with web_search) + lookupCachedCompany
@@ -101,3 +132,19 @@ shared ────────────────────────�
 - **No package-lock concern on macOS**: `better-sqlite3` ships prebuilt binaries for darwin; `npm install` should succeed without a C++ toolchain.
 
 - **The README is outdated**: it still describes the old SSE `/api/evaluate` endpoint, a single-array `questions.json`, and 23 questions. Current API is poll-based (`GET /api/requests?status=ongoing` and `GET /api/best` every 3s), `questions.json` is `{company: [...], crypto: [...]}` with 25 / 23 questions. Use this file as the source of truth.
+
+## Auth + multi-stock gotchas
+
+- **`enqueueRequest` is pure-DB (no LLM call)**. It calls `lookupCachedCompany` (DB-only) and only the full cache-hit fast-path returns synchronously as `'done'`. Everything else inserts a pending row and returns immediately — the hot path was the UX bug where the web UI blocked on the company-lookup LLM call before showing the card. The background processor (`processRequest`) handles company lookup + evaluation asynchronously and updates the same row. For ticker-shaped input, the row's `ticker` column is pre-filled from the input shape so the card shows the ticker immediately even before the LLM resolves company metadata.
+
+- **`/api/requests` shape**: `{input}` is single-stock (anonymous OK, backward compat), `{inputs:[...]}` is multi-stock (auth required, capped at 50, returns `{results: [{input,id,status,ticker?,score?,total?}]}`). The UI batches via `POST /api/evaluate/upload {csv, listId?, newListName?}` which auto-creates a list and adds items.
+
+- **Per-user `GET /api/requests` filter**: anon returns `{requests: [], errors: []}`. Regular user filters `WHERE user_id = ?` (excludes legacy NULL rows). Admin sees all rows including legacy. Implemented as two parallel prepared statements (`getOngoingFor` / `getRecentErrorsFor`) that branch on `user.role === 'admin'`.
+
+- **List naming**: `UNIQUE(user_id, name)` — same name allowed for different users but not twice for the same user. `createList` and `updateListName` both check the constraint and return `409` via the wrapped `Error`.
+
+- **Admin self-protection**: `requireAdmin` blocks role change/deletion of your own user with 400. `setUserRole(id, 'user')` where `id === admin.id` is rejected. `deleteUser(id)` where `id === admin.id` is rejected.
+
+- **Cookie `Secure` flag** is auto-set when `NODE_ENV === 'production'`. Local dev stays on http — don't set `NODE_ENV=production` for `npm run web`.
+
+- **`requests.user_id` migration**: legacy rows keep `user_id = NULL`. `deleteUser()` sets `requests.user_id = NULL` via `ON DELETE SET NULL`. The DB migration that adds the column is idempotent (checks `PRAGMA table_info` first) and runs on every `initDb()`.
