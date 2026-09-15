@@ -139,7 +139,7 @@ shared ────────────────────────�
 
 - **`/api/requests` shape**: `{input}` is single-stock (anonymous OK, backward compat), `{inputs:[...]}` is multi-stock (auth required, capped at 50, returns `{results: [{input,id,status,ticker?,score?,total?}]}`). The UI batches via `POST /api/evaluate/upload {csv, listId?, newListName?}` which auto-creates a list and adds items.
 
-- **Per-user `GET /api/requests` filter**: anon returns `{requests: [], errors: []}`. Regular user filters `WHERE user_id = ?` (excludes legacy NULL rows). Admin sees all rows including legacy. Implemented as two parallel prepared statements (`getOngoingFor` / `getRecentErrorsFor`) that branch on `user.role === 'admin'`.
+- **Per-user `GET /api/requests` filter**: anon sees the **public** recent — rows where `user_id IS NULL` (anonymous activity + legacy rows from before the column existed). Regular user filters `WHERE user_id = ?` (excludes legacy NULL rows). Admin sees all rows including legacy. Implemented as inline helpers in `server.js`: `getOngoingFor`/`getRecentErrorsFor` branch on `user.role === 'admin'`; anon uses parallel `getOngoingPublic`/`getRecentErrorsPublic` that filter `WHERE user_id IS NULL`.
 
 - **List naming**: `UNIQUE(user_id, name)` — same name allowed for different users but not twice for the same user. `createList` and `updateListName` both check the constraint and return `409` via the wrapped `Error`.
 

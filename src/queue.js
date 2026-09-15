@@ -29,6 +29,7 @@ import {
 import { RateLimitError } from './evaluator.js';
 import { logError, logWarn, logInfo, getLogPath } from './logger.js';
 import { getConcurrency } from './settings.js';
+import { refreshOgImage } from './og.js';
 
 const PAUSE_MS = 60 * 60 * 1000; // 1 hour backoff after a 429
 const TICK_MS = 500; // idle poll interval
@@ -175,6 +176,10 @@ async function processRequest(req, client, settings) {
     // Persist the (possibly fresh) company metadata even on a full cache hit.
     saveCompany(company);
     s.completeRequest.run(score, total, Date.now(), Date.now(), req.id);
+    // Refresh the Open Graph image so the next social share reflects the
+    // current score. Fire-and-forget — a slow render shouldn't block the
+    // queue or surface as a request-level error.
+    refreshOgImageAsync(company, score, total);
     logInfo(
       'queue',
       `request #${req.id} (${req.input}) cache hit: ${score}/${total} (${cachedResults.length} factors reused)`
@@ -218,6 +223,9 @@ async function processRequest(req, client, settings) {
   // Persist company metadata so future requests see fresh name/price/country
   // even when the cache-hit path is taken and the LLM is never invoked.
   saveCompany(company);
+  // Refresh the OG image eagerly so the next social share reflects the new
+  // score. Fire-and-forget so a slow sharp render doesn't block the queue.
+  refreshOgImageAsync(company, saved.score, saved.total);
 
   s.completeRequest.run(saved.score, saved.total, Date.now(), Date.now(), req.id);
   logInfo(
@@ -420,4 +428,23 @@ export function dismissRequest(id) {
   initDb();
   const db = getDb();
   return db.prepare(`DELETE FROM requests WHERE id = ?`).run(id).changes;
+}
+
+// Fire-and-forget OG image refresh. Wraps refreshOgImage so the queue can
+// call it inline without awaiting (sharp's PNG render takes ~150ms; we
+// don't want that blocking request completion). Errors are logged but
+// never surfaced to the caller.
+function refreshOgImageAsync(company, score, total) {
+  if (!company?.ticker) return;
+  refreshOgImage(company.ticker, {
+    company,
+    score: typeof score === 'number' ? score : null,
+    total: typeof total === 'number' ? total : null,
+    evaluatedAt: Date.now(),
+  }).catch((err) => {
+    logWarn(
+      'queue',
+      `OG refresh failed for ${company.ticker}: ${err.message || err}`
+    );
+  });
 }

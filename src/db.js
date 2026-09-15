@@ -434,6 +434,21 @@ function prepare(d) {
   };
 }
 
+// Returns one row per ticker that has at least one cached factor, plus the
+// max evaluated_at across all of that ticker's factors. Used by the dynamic
+// /sitemap.xml route. Cheap query (single GROUP BY scan over the small
+// evaluation_factors table) — no caching layer needed.
+export function listTickersWithFactors() {
+  const d = getDb();
+  return d.prepare(`
+    SELECT ticker, MAX(evaluated_at) AS last_evaluated_at
+    FROM evaluation_factors
+    WHERE ticker IS NOT NULL
+    GROUP BY ticker
+    ORDER BY last_evaluated_at DESC
+  `).all();
+}
+
 // Factors for a ticker whose question_hash is in the given set, ordered by
 // idx ASC. Built at runtime because the IN-list length varies per kind
 // (typically ~24). The ix_evaluation_factors_ticker_idx index handles the

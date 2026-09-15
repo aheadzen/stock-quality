@@ -5,9 +5,21 @@ import path from 'node:path';
 import process from 'node:process';
 
 import { loadConfig } from './config.js';
-import { initDb, getDb, getStatements, factorsByTickerAndHashes } from './db.js';
+import {
+  initDb,
+  getDb,
+  getStatements,
+  factorsByTickerAndHashes,
+  listTickersWithFactors,
+} from './db.js';
 import { loadQuestions } from './questions.js';
 import { questionHash, findCompany } from './cache.js';
+import {
+  getOrGenerateOgPng,
+  getOrGenerateDefaultOgPng,
+  OG_WIDTH,
+  OG_HEIGHT,
+} from './og.js';
 import {
   enqueueRequest,
   startProcessor,
@@ -64,6 +76,12 @@ const PUBLIC_DIR = path.resolve('./public');
 // authentication.
 const PREVIEW_FACTOR_LIMIT = 3;
 
+// SPA shell. Read once at boot so the server can splice a custom <head> in
+// for /stock/:ticker (SEO), and so SPA fallback for unknown SPA paths is a
+// constant-time send. The default head in public/index.html is the source of
+// truth for both the SPA and the default server response.
+const INDEX_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
+
 // Memoize the per-kind question counts. The UI polls /api/best every 3s and
 // questions.json only changes at restart (server boot), so loading it once
 // per kind at startup is correct.
@@ -100,20 +118,162 @@ function contentTypeFor(filePath) {
     case '.json': return 'application/json; charset=utf-8';
     case '.svg': return 'image/svg+xml';
     case '.ico': return 'image/x-icon';
+    case '.txt': return 'text/plain; charset=utf-8';
     default: return 'application/octet-stream';
   }
 }
 
-function serveStatic(req, res, urlPath) {
-  let rel = urlPath === '/' ? '/index.html' : urlPath;
-  const abs = path.join(PUBLIC_DIR, rel);
-  if (!abs.startsWith(PUBLIC_DIR)) {
-    return sendJson(res, 403, { error: 'Forbidden' });
+// Escape a string for safe interpolation into an HTML attribute or text node.
+function escapeAttr(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// Build the <head>…</head> block for the SPA shell. Defaults match the head
+// already in public/index.html, so serving INDEX_HTML unmodified is
+// equivalent to calling this with no args. /stock/:ticker customizes the
+// head with the company's name + score; everything else uses the defaults.
+function buildHeadHtml({
+  title = 'Investment Quality — Stock & Crypto Evaluation Dashboard',
+  description = 'Evaluate any stock, crypto, IPO or idea against a 25-point business quality checklist. Public scores, no signup required to browse.',
+  canonical = 'https://app.ifintok.com/',
+  ogType = 'website',
+  robots = 'index, follow',
+  jsonLd = null,
+  ogImage = 'https://app.ifintok.com/og/default.png',
+  ogImageAlt = 'Investment Quality — Stock & Crypto Evaluation Dashboard',
+  twitterCard = 'summary_large_image',
+} = {}) {
+  const t = escapeAttr(title);
+  const d = escapeAttr(description);
+  const c = escapeAttr(canonical);
+  const r = escapeAttr(robots);
+  const img = escapeAttr(ogImage);
+  const imgAlt = escapeAttr(ogImageAlt);
+  let head = `<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${t}</title>
+  <meta name="description" content="${d}" />
+  <meta name="robots" content="${r}" />
+  <meta name="theme-color" content="#2563eb" />
+  <link rel="canonical" href="${c}" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiMyNTYzZWIiLz48dGV4dCB4PSIzMiIgeT0iNDQiIGZvbnQtc2l6ZT0iMzgiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IndoaXRlIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC13ZWlnaHQ9IjcwMCI+SVE8L3RleHQ+PC9zdmc+" />
+
+  <meta property="og:type" content="${ogType}" />
+  <meta property="og:site_name" content="Investment Quality" />
+  <meta property="og:title" content="${t}" />
+  <meta property="og:description" content="${d}" />
+  <meta property="og:url" content="${c}" />
+  <meta property="og:image" content="${img}" />
+  <meta property="og:image:width" content="${OG_WIDTH}" />
+  <meta property="og:image:height" content="${OG_HEIGHT}" />
+  <meta property="og:image:alt" content="${imgAlt}" />
+
+  <meta name="twitter:card" content="${twitterCard}" />
+  <meta name="twitter:title" content="${t}" />
+  <meta name="twitter:description" content="${d}" />
+  <meta name="twitter:image" content="${img}" />
+  <meta name="twitter:image:alt" content="${imgAlt}" />`;
+
+  head += `\n  <link rel="stylesheet" href="/styles.css" />`;
+  if (jsonLd) {
+    head += `\n  <script type="application/ld+json">\n  ${JSON.stringify(jsonLd, null, 2)}\n  </script>`;
   }
-  fs.readFile(abs, (err, data) => {
-    if (err) return sendJson(res, 404, { error: 'Not found' });
-    send(res, 200, { 'Content-Type': contentTypeFor(abs) }, data);
-  });
+
+  head += `\n</head>`;
+  return head;
+}
+
+// Heuristic for "looks like a static asset path": last segment has a file
+// extension (e.g. /foo.css, /img/x.png). Distinguishes real "not found"s
+// from SPA paths like /lists/123 that don't have an on-disk counterpart.
+function looksLikeAssetPath(p) {
+  const last = p.split('/').pop() || '';
+  return /\.[a-zA-Z0-9]+$/.test(last);
+}
+
+// Styled HTML 404 page returned to crawlers + users for missing assets.
+function sendHtml404(res) {
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Page not found — Investment Quality</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="theme-color" content="#2563eb" />
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f7f7f8;
+      color: #111827;
+      line-height: 1.5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .error-card {
+      text-align: center;
+      padding: 40px 32px;
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      max-width: 420px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+    }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    p { margin: 0 0 24px; color: #6b7280; font-size: 14px; }
+    a {
+      display: inline-block;
+      padding: 10px 20px;
+      background: #2563eb;
+      color: white;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 15px;
+    }
+    a:hover { background: #1d4ed8; }
+    .brand { font-size: 12px; color: #9ca3af; margin-top: 24px; letter-spacing: 0.04em; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+  <div class="error-card">
+    <h1>404 — Page not found</h1>
+    <p>The page you're looking for doesn't exist or has been moved.</p>
+    <a href="/">Back to dashboard</a>
+    <div class="brand">Investment Quality</div>
+  </div>
+</body>
+</html>`;
+  send(res, 404, { 'Content-Type': 'text/html; charset=utf-8' }, html);
+}
+
+// Serve either a static asset (200 on hit, HTML 404 on miss) or the SPA
+// shell (200, always — let the client router decide what to render). The
+// /stock/:ticker handler runs before this so it can splice a custom head.
+function serveSpaOrStatic(req, res, urlPath) {
+  if (looksLikeAssetPath(urlPath)) {
+    let rel = urlPath === '/' ? '/index.html' : urlPath;
+    const abs = path.join(PUBLIC_DIR, rel);
+    if (!abs.startsWith(PUBLIC_DIR)) {
+      return sendHtml404(res);
+    }
+    fs.readFile(abs, (err, data) => {
+      if (err) return sendHtml404(res);
+      send(res, 200, { 'Content-Type': contentTypeFor(abs) }, data);
+    });
+    return;
+  }
+  // SPA fallback: every non-asset path serves the shell; the client router
+  // renders renderNotFound() for unknown pathnames.
+  send(res, 200, { 'Content-Type': 'text/html; charset=utf-8' }, INDEX_HTML);
 }
 
 async function readJsonBody(req, { maxBytes = 16 * 1024 } = {}) {
@@ -266,10 +426,13 @@ function handleGetRequests(req, res, url) {
   const RECENT_LIMIT = 15;
   const ERROR_LIMIT = 5;
   const status = url.searchParams.get('status');
-  // Anon: empty list. Legacy NULL user_id rows are visible only to admin
-  // (their per-user filter naturally excludes them).
+  // Anon: see public recent (requests where user_id IS NULL — anonymous
+  // activity + legacy rows from before auth existed). Logged-in users see
+  // their own filtered list below; admin sees everything.
   if (!req.user) {
-    return sendJson(res, 200, { requests: [], errors: [], paused: isPaused() });
+    const ongoing = getOngoingPublic(RECENT_LIMIT).map(shapeRequestRow);
+    const errors = getRecentErrorsPublic(ERROR_LIMIT).map(shapeRequestRow);
+    return sendJson(res, 200, { requests: ongoing, errors, paused: isPaused() });
   }
   if (status === 'errors') {
     const rows = getRecentErrorsFor(req.user, ERROR_LIMIT).map(shapeRequestRow);
@@ -319,11 +482,42 @@ function getRecentErrorsFor(user, limit) {
   `).all(user.id, limit);
 }
 
+// Public recent: requests with user_id IS NULL — anonymous activity submitted
+// without a session + legacy rows from before the user_id column existed.
+// Mirrors the column set returned by getOngoingFor so shapeRequestRow works
+// the same way for anon.
+function getOngoingPublic(limit) {
+  initDb();
+  const db = getDb();
+  return db.prepare(`
+    SELECT r.*,
+           c.name AS company_name, c.kind AS company_kind, c.profile AS company_profile,
+           c.country AS company_country,
+           (SELECT MAX(evaluated_at) FROM evaluation_factors WHERE ticker = r.ticker) AS evaluated_at
+    FROM requests r
+    LEFT JOIN companies c ON c.ticker = r.ticker
+    WHERE r.user_id IS NULL
+      AND r.status IN ('pending','processing','done')
+    ORDER BY r.updated_at DESC
+    LIMIT ?
+  `).all(limit);
+}
+
+function getRecentErrorsPublic(limit) {
+  initDb();
+  const db = getDb();
+  return db.prepare(`
+    SELECT * FROM requests
+    WHERE status = 'error' AND user_id IS NULL
+    ORDER BY updated_at DESC LIMIT ?
+  `).all(limit);
+}
+
 function handleGetBest(req, res) {
   // Per-question caching means "complete evaluation" is determined by the
   // count of distinct cached factors matching the current question set for
   // the ticker's kind. Pass the two kind counts into the best-of query.
-  const rows = getBest(5, kindCounts()).map((r) => ({
+  const rows = getBest(20, kindCounts()).map((r) => ({
     id: r.id,
     input: r.input,
     ticker: r.ticker,
@@ -379,6 +573,160 @@ async function handlePostReportPreview(req, res) {
     `POST /api/report/preview served ${ticker} (${factors.length} of ${total} factors, kind=${kind})`
   );
   return sendJson(res, 200, { ticker, company, factors, total });
+}
+
+// Server-rendered head for /stock/:ticker. Looks up the company + score and
+// splices a custom <head> into the SPA shell so crawlers and link previews
+// see meaningful meta without executing JS. If the ticker is unknown (no
+// metadata, no factors), falls back to the generic shell + the SPA's
+// "No recent activity" empty state.
+async function handleGetStockPage(req, res, ticker) {
+  const company = findCompany(ticker);
+  const kind = company?.kind || 'listed';
+  const hashes = loadQuestions(kind).map(questionHash);
+  const rows = factorsByTickerAndHashes(ticker, hashes);
+  const score = rows.filter((r) => !r.error && r.score === 1).length;
+  const total = rows.filter((r) => !r.error).length;
+  const hasFactors = total > 0;
+
+  const canonical = `https://app.ifintok.com/stock/${ticker}`;
+  // Always point at the per-ticker image. The handler at /og/<TICKER>.png
+  // falls back to /og/default.png server-side when there's no company or
+  // no factors yet — keeps the URL consistent and lets the SPA update the
+  // same og:image URL on client-side navigation.
+  const ogImage = `https://app.ifintok.com/og/${ticker}.png`;
+  let title;
+  let description;
+  let ogImageAlt;
+  let jsonLd = null;
+
+  if (company && hasFactors) {
+    const name = company.name;
+    title = `${ticker} — ${name} Quality Report | Investment Quality`;
+    description = `${name} (${ticker}) scored ${score}/${total} on the Investment Quality checklist. View the full breakdown of business quality factors.`;
+    ogImageAlt = `${name} (${ticker}) scored ${score}/${total} on the Investment Quality checklist`;
+    jsonLd =
+      kind === 'crypto'
+        ? {
+            '@context': 'https://schema.org',
+            '@type': 'FinancialProduct',
+            name,
+            identifier: ticker,
+            url: canonical,
+          }
+        : {
+            '@context': 'https://schema.org',
+            '@type': 'Organization',
+            name,
+            tickerSymbol: ticker,
+            url: canonical,
+          };
+  } else if (company) {
+    const name = company.name;
+    title = `${ticker} — ${name} | Investment Quality`;
+    description = `${name} (${ticker}). Submit from the dashboard to see the full business quality breakdown.`;
+    ogImageAlt = `${name} (${ticker}) — Investment Quality`;
+  } else {
+    title = `${ticker} — Investment Quality`;
+    description = `${ticker} quality evaluation. Submit from the dashboard to see the full breakdown of business quality factors.`;
+    ogImageAlt = `${ticker} — Investment Quality`;
+  }
+
+  const head = buildHeadHtml({ title, description, canonical, jsonLd, ogImage, ogImageAlt });
+  const html = INDEX_HTML.replace(/<head>[\s\S]*?<\/head>/, head);
+  send(res, 200, { 'Content-Type': 'text/html; charset=utf-8' }, html);
+}
+
+// Dynamic sitemap. Lists the homepage plus every ticker with at least one
+// cached factor. lastmod is the max(evaluated_at) for that ticker, formatted
+// as YYYY-MM-DD. Cheap enough to rebuild per request — no cache layer.
+function handleGetSitemap(req, res) {
+  const tickers = listTickersWithFactors();
+  const base = 'https://app.ifintok.com';
+  const entries = [
+    { loc: `${base}/`, changefreq: 'hourly' },
+    ...tickers.map((t) => ({
+      loc: `${base}/stock/${t.ticker}`,
+      lastmod: t.last_evaluated_at
+        ? new Date(t.last_evaluated_at).toISOString().slice(0, 10)
+        : null,
+      changefreq: 'weekly',
+    })),
+  ];
+  const body = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${entries
+  .map((u) => {
+    let s = `  <url>\n    <loc>${u.loc}</loc>`;
+    if (u.lastmod) s += `\n    <lastmod>${u.lastmod}</lastmod>`;
+    s += `\n    <changefreq>${u.changefreq}</changefreq>\n  </url>`;
+    return s;
+  })
+  .join('\n')}
+</urlset>`;
+  send(res, 200, { 'Content-Type': 'application/xml; charset=utf-8' }, body);
+}
+
+// Serve a 1200x630 PNG for use as og:image / twitter:image. Two paths:
+//   /og/default.png  — generic branded card (used by dashboard + 404 +
+//                      stock pages with no evaluation yet). Cached forever.
+//   /og/<TICKER>.png — per-stock card with ticker, company name, score,
+//                      country, evaluated date. Lazy-generated on first
+//                      crawler hit; the queue also refreshes eagerly after
+//                      every successful evaluation.
+// On miss for a ticker with no company metadata, falls back to default.png
+// (decision: missing tickers always show the generic image so we don't
+// burn CPU on share-bait typos).
+async function handleGetOgImage(req, res, url) {
+  // /og/default.png
+  if (url.pathname === '/og/default.png') {
+    const { png } = await getOrGenerateDefaultOgPng();
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': png.length,
+      'Cache-Control': 'public, max-age=604800, immutable',
+    });
+    return res.end(png);
+  }
+
+  // /og/<TICKER>.png
+  const tickerMatch = url.pathname.match(/^\/og\/([A-Za-z0-9.\-_]+)\.png$/);
+  if (!tickerMatch) return sendHtml404(res);
+  const ticker = tickerMatch[1].toUpperCase();
+
+  initDb();
+  const company = findCompany(ticker);
+  if (!company) {
+    // No metadata — serve default.png instead of generating a ticker-only
+    // card. Avoids caching N placeholder images for share-bait URLs.
+    const { png } = await getOrGenerateDefaultOgPng();
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': png.length,
+      'Cache-Control': 'public, max-age=86400',
+    });
+    return res.end(png);
+  }
+
+  const kind = company.kind || 'listed';
+  const hashes = loadQuestions(kind).map(questionHash);
+  const rows = factorsByTickerAndHashes(ticker, hashes);
+  const total = rows.filter((r) => !r.error).length;
+  const score = rows.filter((r) => !r.error && r.score === 1).length;
+  const evaluatedAt = rows.reduce((m, r) => Math.max(m, r.evaluated_at || 0), 0);
+
+  const { png } = await getOrGenerateOgPng(ticker, {
+    company,
+    score: total > 0 ? score : null,
+    total: total > 0 ? total : null,
+    evaluatedAt,
+  });
+  res.writeHead(200, {
+    'Content-Type': 'image/png',
+    'Content-Length': png.length,
+    'Cache-Control': 'public, max-age=86400',
+  });
+  res.end(png);
 }
 
 async function handlePostReport(req, res) {
@@ -810,8 +1158,30 @@ const server = http.createServer(async (req, res) => {
 
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      // Stock detail page: server-rendered <head> for SEO + link previews.
+      // Pattern matches /stock/<TICKER> with URL-safe chars; ticker is
+      // uppercased before lookup so /stock/aapl works too.
+      const stockMatch = url.pathname.match(/^\/stock\/([A-Za-z0-9.\-_]+)$/);
+      if (stockMatch) {
+        return handleGetStockPage(req, res, stockMatch[1].toUpperCase());
+      }
+      // Dynamic sitemap.xml (needs DB lookup, so not a static file).
+      if (url.pathname === '/sitemap.xml') {
+        return handleGetSitemap(req, res);
+      }
+      // Open Graph images (/og/default.png + /og/<TICKER>.png). These have
+      // .png extensions so serveSpaOrStatic would treat them as missing
+      // assets and return 404 HTML — intercept them here first.
+      // Also accept HEAD so pre-flight crawlers get headers without body.
+      if (url.pathname.startsWith('/og/')) {
+        return handleGetOgImage(req, res, url);
+      }
+    }
+    // Everything else under GET that isn't /api/*: SPA fallback for unknown
+    // paths, real static files for asset paths, HTML 404 for missing assets.
     if (req.method === 'GET' && (url.pathname === '/' || !url.pathname.startsWith('/api/'))) {
-      return serveStatic(req, res, url.pathname);
+      return serveSpaOrStatic(req, res, url.pathname);
     }
     // Auth routes
     if (req.method === 'POST' && url.pathname === '/api/auth/register') {
