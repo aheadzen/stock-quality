@@ -238,8 +238,12 @@ export function exportListCsv(listId, userId) {
     if (typeof score === 'number' && typeof total === 'number' && total > 0) {
       pct = `${((score / total) * 100).toFixed(1)}%`;
     }
+    // Ticker column shows the resolved ticker when the user added an input
+    // that needed name/LIKE resolution; raw input goes through only when no
+    // resolution succeeded.
+    const exportTicker = r.resolved_ticker ?? r.ticker;
     out.push(csvRow([
-      r.ticker,
+      exportTicker,
       r.name ?? '',
       score ?? '',
       total ?? '',
