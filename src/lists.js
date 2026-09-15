@@ -217,43 +217,10 @@ function isoOrEmpty(ts) {
 }
 
 function buildExportRows(listId) {
-  initDb();
-  const db = getDb();
-  // Pull one row per (ticker, list) joining the latest request score and most
-  // recent factor evaluated_at. The SELECT coalesces NULLs from "no data yet"
-  // cleanly so the CSV has empty cells rather than 'undefined'.
-  const rows = db.prepare(`
-    SELECT
-      li.ticker,
-      li.added_at,
-      c.name,
-      c.kind,
-      c.country,
-      (
-        SELECT r.score
-        FROM requests r
-        WHERE r.ticker = li.ticker AND r.status = 'done' AND r.score IS NOT NULL
-        ORDER BY r.completed_at DESC
-        LIMIT 1
-      ) AS score,
-      (
-        SELECT r.total
-        FROM requests r
-        WHERE r.ticker = li.ticker AND r.status = 'done' AND r.score IS NOT NULL
-        ORDER BY r.completed_at DESC
-        LIMIT 1
-      ) AS total,
-      (
-        SELECT MAX(ef.evaluated_at)
-        FROM evaluation_factors ef
-        WHERE ef.ticker = li.ticker
-      ) AS evaluated_at
-    FROM list_items li
-    LEFT JOIN companies c ON c.ticker = li.ticker
-    WHERE li.list_id = ?
-    ORDER BY li.added_at DESC
-  `).all(listId);
-  return rows;
+  // Reuse getListItems so the export picks up the same 3-tier ticker
+  // resolution as the UI. Items added as company names would otherwise miss
+  // the requests.ticker join and export blank scores.
+  return getListItems(listId);
 }
 
 export function exportListCsv(listId, userId) {
