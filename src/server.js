@@ -276,11 +276,14 @@ function serveSpaOrStatic(req, res, urlPath) {
     return;
   }
   // SPA fallback: every non-asset path serves the shell; the client router
-  // renders renderNotFound() for unknown pathnames. Same no-cache + Last-
-  // Modified treatment so a deploy that adds a new <script> or <link> tag
-  // becomes visible without waiting out Cloudflare's TTL.
-  const shellHeaders = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' };
-  shellHeaders['Last-Modified'] = SERVER_STARTED_AT.toUTCString();
+  // renders renderNotFound() for unknown pathnames. Same no-store +
+  // Last-Modified treatment so a deploy that adds a new <script> or
+  // <link> tag becomes visible without waiting out Cloudflare's TTL.
+  const shellHeaders = {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Last-Modified': SERVER_STARTED_AT.toUTCString(),
+  };
   send(res, 200, shellHeaders, INDEX_HTML);
 }
 
@@ -288,13 +291,18 @@ function serveSpaOrStatic(req, res, urlPath) {
 // process start time as a Last-Modified hint. Every pm2 restart revalidates.
 const SERVER_STARTED_AT = new Date();
 
-// Headers for the SPA shell and its assets (app.js, styles.css). We send
-// `Cache-Control: no-cache` plus a real `Last-Modified` so:
-//   - browsers keep the cached body but always revalidate (fast 304 when
-//     nothing changed, instant refresh after a deploy)
-//   - Cloudflare (or any CDN) caches the body but revalidates with the
-//     origin on every request — instead of holding the old copy for the
-//     default 4-hour asset TTL.
+// Headers for the SPA shell and its assets (app.js, styles.css).
+//
+// We send `Cache-Control: no-store` plus a real `Last-Modified`:
+//   - `no-store` (not `no-cache`) because Cloudflare overrides `no-cache`
+//     on .js/.css static assets and applies its own 4-hour edge TTL —
+//     which is exactly the cache-stale problem this is fixing.
+//     `no-store` tells Cloudflare to skip the edge cache entirely and
+//     hit the origin on every request. Origin serves from disk (fast),
+//     so the latency hit is negligible for a low-traffic app.
+//   - `Last-Modified` lets browsers issue conditional GETs anyway —
+//     they still get a fast 304 when nothing changed, so the absence
+//     of edge caching doesn't burn mobile bandwidth.
 //
 // For non-asset SPA paths the HTML shell is read once into INDEX_HTML at
 // boot, so its mtime is the server start time — still useful: every
@@ -305,7 +313,7 @@ function assetHeaders(absPath) {
     const stat = fs.statSync(absPath);
     headers['Last-Modified'] = stat.mtime.toUTCString();
   } catch { /* stat failure is non-fatal — header just won't be set */ }
-  headers['Cache-Control'] = 'no-cache';
+  headers['Cache-Control'] = 'no-store';
   return headers;
 }
 
