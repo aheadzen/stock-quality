@@ -770,10 +770,16 @@
       const input = document.getElementById('input');
       const btn = document.getElementById('btn');
       wireCombobox(input);
+      // On touch-primary devices (phones), keep the soft keyboard hidden
+      // after submit so the user can see the result. On desktop with a real
+      // keyboard, refocusing the input is the faster path for power users
+      // entering many tickers in a row.
+      const isTouch = window.matchMedia('(pointer: coarse)').matches;
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const value = input.value.trim();
         if (!value) return;
+        if (isTouch) input.blur();
         btn.disabled = true;
         setStatus(`Queuing "${value}"...`);
         try {
@@ -788,12 +794,12 @@
           } else if (j.status === 'done') {
             setStatus(`Cached: ${j.score} / ${j.total} (${j.ticker || 'n/a'}).`);
             input.value = '';
-            input.focus();
+            if (!isTouch) input.focus();
             await refreshAll();
           } else {
             setStatus(`Queued #${j.id}. Watch the Recent column.`);
             input.value = '';
-            input.focus();
+            if (!isTouch) input.focus();
             await refreshAll();
           }
         } catch (err) {
