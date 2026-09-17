@@ -26,6 +26,11 @@ import {
   saveFactor,
   saveFactors,
 } from './cache.js';
+import {
+  findIndianStock,
+  buildIndianCompany,
+  loadIndianStocks,
+} from './indianStocks.js';
 import { RateLimitError } from './evaluator.js';
 import { logError, logWarn, logInfo, getLogPath } from './logger.js';
 import { getConcurrency } from './settings.js';
@@ -59,8 +64,23 @@ export async function enqueueRequest(input, { userId = null } = {}) {
   // DB-only lookup. Returns null when the input isn't ticker-shaped, when no
   // cached row exists, or when the cached row's metadata is older than 7 days.
   // Stale metadata will be refreshed by the background processor.
-  const company = await lookupCachedCompany(trimmed);
-  const ticker = company?.ticker || null;
+  const cachedCompany = await lookupCachedCompany(trimmed);
+
+  // For ticker-shaped input that's in the NSE CSV but not yet in the DB,
+  // synthesize a stub company so we never call the LLM just to learn what we
+  // already know (ticker, name, country=IN, currency=INR, exchange=NSE).
+  // skipEnrichment=true tells processRequest to also skip Tavily. This runs
+  // independently of the TICKER_SHAPE regex because NSE symbols can be up to
+  // 10 chars (e.g. RELIANCE) — wider than the US-style regex limit.
+  let company = cachedCompany;
+  let ticker = company?.ticker || null;
+  if (!ticker) {
+    const indianRow = findIndianStock(trimmed);
+    if (indianRow) {
+      company = buildIndianCompany(indianRow);
+      ticker = indianRow.ticker;
+    }
+  }
 
   // Fast-path: full cache hit. Same-ticker → instant 'done' so the UI doesn't
   // even flicker through 'pending'.
@@ -114,6 +134,15 @@ async function processRequest(req, client, settings) {
 
   let company = await lookupCachedCompany(req.input);
   if (!company) {
+    // For known NSE tickers the DB row may not exist yet — synthesize a stub
+    // so we don't call the LLM just to learn what we already know. Independent
+    // of the ticker-shape regex (NSE allows up to 10 chars).
+    const indianRow = findIndianStock(req.input);
+    if (indianRow) {
+      company = buildIndianCompany(indianRow);
+    }
+  }
+  if (!company) {
     try {
       company = await lookupCompany(client, req.input);
     } catch (err) {
@@ -131,7 +160,10 @@ async function processRequest(req, client, settings) {
   // real ticker, the enrichment upgrades kind to 'listed' automatically.
   // Best-effort: any error here is swallowed and the original (possibly
   // partial) company is kept.
-  if (company && (!company.ticker || company.price == null)) {
+  //
+  // skipEnrichment is set on stub companies from indianStocks.js — for known
+  // NSE tickers the CSV already gives us everything we need.
+  if (company && !company.skipEnrichment && (!company.ticker || company.price == null)) {
     try {
       company = await enrichCompanyWithTavily(client, req.input, company);
     } catch (err) {

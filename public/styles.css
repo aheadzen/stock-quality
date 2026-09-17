@@ -26,6 +26,8 @@
       margin: 0 auto;
       padding: 32px 24px 64px;
     }
+    /* Prevent any child from forcing horizontal scroll on small screens. */
+    html, body { overflow-x: hidden; }
     h1 { margin: 0 0 4px; font-size: 28px; }
     .tagline {
       margin: 0 0 6px;
@@ -40,6 +42,7 @@
       display: flex;
       gap: 8px;
       margin-bottom: 24px;
+      flex-wrap: wrap;
     }
     input[type="text"], input[type="password"] {
       flex: 1;
@@ -92,6 +95,31 @@
     }
     @media (max-width: 720px) {
       .dashboard { grid-template-columns: 1fr; }
+      .container { padding: 20px 14px 48px; }
+      h1 { font-size: 24px; }
+      .card-name { white-space: normal; }
+      .factors-row {
+        grid-template-columns: 32px 1fr 50px;
+        gap: 8px;
+        padding: 12px 14px;
+      }
+      .factors-row .idx { font-size: 11px; }
+      .factors-row .score { font-size: 16px; }
+      .form > button { width: 100%; }
+      .form .combobox { flex: 1 1 100%; }
+      .passcode-prompt { margin: 16px auto; padding: 18px; }
+      .detail-summary { flex-direction: column; align-items: flex-start; gap: 12px; }
+      .detail-score { font-size: 32px; }
+    }
+    @media (max-width: 480px) {
+      .container { padding: 16px 12px 40px; }
+      h1 { font-size: 22px; }
+      .tagline { font-size: 14px; }
+      .card { padding: 12px 14px; gap: 10px; }
+      .card-name { font-size: 14px; }
+      .card-ticker { font-size: 12px; }
+      .score-big { font-size: 26px; }
+      .score-total { font-size: 14px; }
     }
 
     .column h2 {
@@ -639,6 +667,57 @@
       cursor: pointer;
     }
     .dropdown-menu button:hover:not(:disabled) { background: #f1f5f9; color: var(--accent); }
+
+    /* Combobox (home form ticker autocomplete) */
+    .form .combobox {
+      flex: 1;
+      position: relative;
+      min-width: 0;
+    }
+    .form .combobox input[type="text"] {
+      width: 100%;
+    }
+    .combobox-list {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      margin: 0;
+      padding: 4px 0;
+      list-style: none;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+      max-height: 320px;
+      overflow-y: auto;
+      z-index: 30;
+    }
+    .combobox-list li {
+      padding: 8px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .combobox-list li:hover,
+    .combobox-list li.active {
+      background: #f1f5f9;
+    }
+    .combobox-list li .ticker {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+    .combobox-list li .name {
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
 
     /* Inline status badge (e.g., for export result) */
     .inline-status {

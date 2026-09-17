@@ -66,6 +66,10 @@ import {
   deleteUser,
   listUsers,
 } from './users.js';
+import {
+  searchIndianStocks,
+  loadIndianStocks,
+} from './indianStocks.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.resolve('./public');
@@ -532,6 +536,17 @@ function handleGetBest(req, res) {
     evaluated_at: r.evaluated_at ?? null,
   }));
   return sendJson(res, 200, { requests: rows });
+}
+
+// Public — no auth. Returns up to 20 NSE tickers (main board + SME) whose
+// ticker or name contains the query (case-insensitive, all tokens must match).
+// Drives the home-form combobox. Pure in-memory — no DB hit.
+function handleGetStocks(req, res, url) {
+  const q = url.searchParams.get('q') || '';
+  const limitRaw = Number(url.searchParams.get('limit') || 20);
+  const limit = Number.isFinite(limitRaw) ? Math.min(50, Math.max(1, limitRaw)) : 20;
+  const matches = searchIndianStocks(q, limit);
+  return sendJson(res, 200, { stocks: matches });
 }
 
 async function handlePostReportPreview(req, res) {
@@ -1211,6 +1226,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/best') {
       return handleGetBest(req, res);
     }
+    if (req.method === 'GET' && url.pathname === '/api/stocks') {
+      return handleGetStocks(req, res, url);
+    }
     if (req.method === 'POST' && url.pathname === '/api/report') {
       return handlePostReport(req, res);
     }
@@ -1340,6 +1358,16 @@ try {
 } catch (err) {
   logError('boot', 'questions load failed', err);
   process.exit(1);
+}
+
+// Load the NSE ticker index so /api/stocks and the queue's fast-path are
+// ready immediately. loadIndianStocks() never throws — a missing CSV is
+// surfaced as a warning but doesn't block boot.
+try {
+  const status = loadIndianStocks();
+  logInfo('boot', `NSE ticker index loaded: ${status.count} entries${status.error ? ` (warn: ${status.error})` : ''}`);
+} catch (err) {
+  logWarn('boot', `NSE index load failed (non-fatal): ${err.message || err}`);
 }
 
 startProcessor();

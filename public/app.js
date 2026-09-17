@@ -313,8 +313,11 @@
             <strong>Sign in</strong> to evaluate multiple stocks at once, group them into private lists, and export results as CSV.
             <button class="nav-link signin" style="margin-left: 8px; padding: 2px 10px;" id="banner-signin">Sign in</button>
           </div>
-          <form class="form" id="form">
-            <input type="text" id="input" placeholder="Enter ticker, name, or idea (e.g. AAPL, Berkshire Hathaway, BTC)" autocomplete="off" required />
+          <form class="form" id="form" autocomplete="off">
+            <div class="combobox" id="combobox">
+              <input type="text" id="input" placeholder="Enter ticker or company name (e.g. RELIANCE, Tata Motors, AAPL)" autocomplete="off" required />
+              <ul class="combobox-list" id="combobox-list" role="listbox" hidden></ul>
+            </div>
             <button type="submit" id="btn">Evaluate</button>
           </form>
         `;
@@ -375,7 +378,7 @@
           <h3 style="color: var(--red);">Delete ${escapeHtml(ticker)}?</h3>
           <p>This permanently removes the cached evaluation, factors, company record, and request history for this ticker. Enter the 4-digit passcode to confirm.</p>
           <form class="passcode-form" id="delete-form">
-            <input type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" autocomplete="off" id="delete-input" autofocus />
+            <input type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" autocomplete="off" id="delete-input" />
             <button type="submit" class="danger">Delete</button>
           </form>
           <div class="passcode-error" id="delete-error"></div>
@@ -533,7 +536,7 @@
               <h3>${remaining} more question${remaining === 1 ? '' : 's'} behind the passcode</h3>
               <p>Enter the 4-digit code to unlock the full report.</p>
               <form class="passcode-form" id="passcode-form">
-                <input type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" autocomplete="off" id="passcode-input" autofocus />
+                <input type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" autocomplete="off" id="passcode-input" />
                 <button type="submit">Unlock</button>
               </form>
               <div class="passcode-error" id="passcode-error">${escapeHtml(errorMsg)}</div>
@@ -766,6 +769,7 @@
       if (!form) return;
       const input = document.getElementById('input');
       const btn = document.getElementById('btn');
+      wireCombobox(input);
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const value = input.value.trim();
@@ -797,6 +801,135 @@
         } finally {
           btn.disabled = false;
         }
+      });
+    }
+
+    // Search-as-you-type autocomplete bound to the home form's ticker input.
+    // Pulls from /api/stocks?q=… on input (debounced 150ms). Selecting a result
+    // fills the input with the SYMBOL and submits the form — the server uses
+    // the SYMBOL to skip both the LLM company lookup and the Tavily enrichment
+    // for known NSE tickers. Free text (no match) still works and falls through
+    // to the existing LLM path.
+    function wireCombobox(input) {
+      const combobox = document.getElementById('combobox');
+      const list = document.getElementById('combobox-list');
+      if (!combobox || !list) return;
+
+      let debounceTimer = null;
+      let activeIndex = -1;
+      let currentMatches = [];
+      let lastQuery = '';
+
+      const closeList = () => {
+        list.hidden = true;
+        list.innerHTML = '';
+        activeIndex = -1;
+        currentMatches = [];
+      };
+
+      const openList = () => {
+        if (currentMatches.length > 0) list.hidden = false;
+      };
+
+      const renderMatches = (matches) => {
+        list.innerHTML = '';
+        activeIndex = -1;
+        currentMatches = matches;
+        if (matches.length === 0) {
+          list.hidden = true;
+          return;
+        }
+        for (const m of matches) {
+          const li = document.createElement('li');
+          li.setAttribute('role', 'option');
+          li.dataset.ticker = m.ticker;
+          li.innerHTML =
+            `<span class="ticker">${escapeHtml(m.ticker)}</span>` +
+            `<span class="name">${escapeHtml(m.name)}</span>`;
+          li.addEventListener('mousedown', (ev) => {
+            // mousedown (not click) so the input's blur doesn't close the list
+            // before our handler runs.
+            ev.preventDefault();
+            choose(m.ticker);
+          });
+          list.appendChild(li);
+        }
+        list.hidden = false;
+      };
+
+      const choose = (ticker) => {
+        input.value = ticker;
+        closeList();
+        // Submit the parent form.
+        const form = input.closest('form');
+        if (form) form.requestSubmit ? form.requestSubmit() : form.dispatchEvent(new Event('submit', { cancelable: true }));
+      };
+
+      const setActive = (idx) => {
+        const items = list.querySelectorAll('li');
+        items.forEach((el, i) => el.classList.toggle('active', i === idx));
+        activeIndex = idx;
+        if (idx >= 0 && items[idx]) items[idx].scrollIntoView({ block: 'nearest' });
+      };
+
+      const fetchSuggestions = async (q) => {
+        if (q === lastQuery) return;
+        lastQuery = q;
+        try {
+          const res = await fetch(`/api/stocks?q=${encodeURIComponent(q)}&limit=12`);
+          if (!res.ok) { closeList(); return; }
+          const j = await res.json();
+          // Drop late responses that don't match the current query.
+          if (q !== lastQuery) return;
+          renderMatches(j.stocks || []);
+        } catch {
+          closeList();
+        }
+      };
+
+      input.addEventListener('input', () => {
+        const q = input.value.trim();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        if (q.length === 0) { closeList(); lastQuery = ''; return; }
+        debounceTimer = setTimeout(() => fetchSuggestions(q), 150);
+      });
+
+      input.addEventListener('focus', () => {
+        const q = input.value.trim();
+        if (q.length > 0 && currentMatches.length > 0) openList();
+      });
+
+      input.addEventListener('blur', () => {
+        // Delay so a click on a suggestion still registers.
+        setTimeout(closeList, 120);
+      });
+
+      input.addEventListener('keydown', (e) => {
+        const items = list.querySelectorAll('li');
+        if (e.key === 'ArrowDown') {
+          if (items.length === 0) return;
+          e.preventDefault();
+          setActive(Math.min(items.length - 1, activeIndex + 1));
+        } else if (e.key === 'ArrowUp') {
+          if (items.length === 0) return;
+          e.preventDefault();
+          setActive(Math.max(0, activeIndex - 1));
+        } else if (e.key === 'Enter') {
+          if (activeIndex >= 0 && items[activeIndex]) {
+            e.preventDefault();
+            choose(items[activeIndex].dataset.ticker);
+          }
+        } else if (e.key === 'Escape') {
+          if (!list.hidden) {
+            e.preventDefault();
+            closeList();
+          }
+        }
+      });
+
+      // Click outside the combobox closes the list.
+      document.addEventListener('mousedown', (e) => {
+        if (!combobox.contains(e.target)) closeList();
       });
     }
 
