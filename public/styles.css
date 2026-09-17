@@ -99,9 +99,19 @@
       h1 { font-size: 24px; }
       .card-name { white-space: normal; }
       .column { min-width: 0; }
-      .card { min-width: 0; max-width: 100%; flex-wrap: wrap; }
-      .card-body { min-width: 0; flex: 1 1 100%; }
-      .card-score { flex: 1 1 auto; min-width: 0; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); text-align: left; }
+      /* Switch the card to a vertical layout so body and score can never
+         end up on the same row on a phone — guarantees no horizontal
+         overflow regardless of ticker/badge/profile width. */
+      .card { display: flex; flex-direction: column; gap: 6px; }
+      .card-body { width: 100%; min-width: 0; }
+      .card-score {
+        width: 100%;
+        min-width: 0;
+        text-align: left;
+        padding-top: 8px;
+        border-top: 1px solid var(--border);
+      }
+      .card-score .score-big { font-size: 22px; }
       .factors-row {
         grid-template-columns: 32px 1fr 50px;
         gap: 8px;
