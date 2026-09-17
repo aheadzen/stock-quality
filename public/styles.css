@@ -90,14 +90,18 @@
 
     .dashboard {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 24px;
     }
     @media (max-width: 720px) {
-      .dashboard { grid-template-columns: 1fr; }
+      .dashboard { grid-template-columns: minmax(0, 1fr); }
       .container { padding: 20px 14px 48px; }
       h1 { font-size: 24px; }
       .card-name { white-space: normal; }
+      .column { min-width: 0; }
+      .card { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+      .card-body { min-width: 0; flex: 1 1 100%; }
+      .card-score { flex: 1 1 auto; min-width: 0; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); text-align: left; }
       .factors-row {
         grid-template-columns: 32px 1fr 50px;
         gap: 8px;
@@ -118,8 +122,9 @@
       .card { padding: 12px 14px; gap: 10px; }
       .card-name { font-size: 14px; }
       .card-ticker { font-size: 12px; }
-      .score-big { font-size: 26px; }
+      .score-big { font-size: 24px; }
       .score-total { font-size: 14px; }
+      .card-score { font-size: 24px; }
     }
 
     .column h2 {

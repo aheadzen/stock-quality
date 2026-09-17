@@ -628,7 +628,7 @@
         ? `<span class="status-pill ${escapeHtml(r.status)}">${escapeHtml(r.status)}</span>`
         : '';
       const scoreText = (r.status === 'done' && typeof r.score === 'number')
-        ? `<span class="score-big ${pctClass(r.score, r.total)}">${r.score} / ${r.total || '?'}</span>`
+        ? `<span class="score-big ${pctClass(r.score, r.total)}"><span class="score-num">${r.score}</span><span class="score-total"> / ${r.total || '?'}</span></span>`
         : (r.status === 'error'
             ? `<span class="score-big gray" title="${escapeHtml(r.error_message || '')}">ERR</span>`
             : (r.status === 'processing' && typeof r.score === 'number'
